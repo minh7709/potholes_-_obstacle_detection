@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 # Backend API server URL
 API_URL = "http://localhost:8000"
@@ -135,7 +136,7 @@ with st.sidebar.form("config_form"):
 
     if submit_config and backend_online:
         try:
-            post_url = f"{API_URL}/api/config?confidence_threshold={conf_val}&nms_threshold={nms_val}&video_source={source_val}"
+            post_url = f"{API_URL}/api/config?confidence_threshold={conf_val}&nms_threshold={nms_val}&video_source={quote(source_val, safe='')}"
             res = requests.post(post_url)
             if res.status_code == 200:
                 st.sidebar.success("Configuration updated!")
@@ -157,9 +158,12 @@ st.markdown("<h1 style='margin-bottom: 5px;'>Pothole Detection & Telemetry</h1>"
 st.markdown("<p style='color: #94a3b8; font-size: 1rem; margin-bottom: 2rem;'>Real-time AI roadway inspection camera and statistics logs</p>", unsafe_allow_html=True)
 
 if not backend_online:
-    st.error("⚠️ Backend API Server is Offline. Please start the backend server by running `uvicorn main:app --reload` first.")
+    st.error("⚠️ Backend API Server is Offline. Please start the backend server by running `python main.py` first.")
     st.info("💡 Make sure you are running the command in the virtual environment `.venv\\Scripts\\activate`.")
-    st.stop()
+    # Auto-retry every 3 seconds — do NOT call st.stop() or the page will never self-recover
+    with st.spinner("Waiting for backend to come online..."):
+        time.sleep(3)
+    st.rerun()
 
 # Load Statistics from Backend API
 stats = {"total": 0, "severity": {"Low": 0, "Medium": 0, "High": 0}, "hourly": {}, "recent": []}
