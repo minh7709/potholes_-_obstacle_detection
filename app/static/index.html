@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pothole Detection Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar / Navigation -->
+        <aside class="sidebar">
+            <div class="logo-area">
+                <div class="logo-icon">
+                    <i data-lucide="scan-eye"></i>
+                </div>
+                <span>RoadVision</span>
+            </div>
+            
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#history" class="nav-item" id="nav-history">
+                    <i data-lucide="history"></i>
+                    <span>Log History</span>
+                </a>
+                <a href="#settings" class="nav-item" id="nav-settings">
+                    <i data-lucide="settings"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+            
+            <div class="system-status">
+                <div class="status-indicator online"></div>
+                <div class="status-details">
+                    <p class="status-title">System Status</p>
+                    <p class="status-sub">Online & Analyzing</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="app-header">
+                <div class="header-title">
+                    <h1>Pothole Detection Dashboard</h1>
+                    <p>Real-time roadway inspection and telemetry analysis</p>
+                </div>
+                <div class="header-actions">
+                    <span class="time-badge" id="current-time">00:00:00 AM</span>
+                </div>
+            </header>
+
+            <!-- Grid Layout -->
+            <div class="dashboard-grid">
+                <!-- Live Video Feed (Left Column) -->
+                <div class="card video-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i data-lucide="video" class="icon-indigo"></i>
+                            <h2>Live Stream Feed</h2>
+                        </div>
+                        <span class="badge badge-danger blink">LIVE</span>
+                    </div>
+                    <div class="video-container">
+                        <img id="video-stream" src="/api/video_feed" alt="Video stream feed offline">
+                    </div>
+                </div>
+
+                <!-- Telemetry Cards (Right Column) -->
+                <div class="telemetry-column">
+                    <!-- Total Potholes Card -->
+                    <div class="card stat-card pulse-blue">
+                        <div class="stat-icon icon-rose">
+                            <i data-lucide="alert-triangle"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3>Total Potholes</h3>
+                            <p class="stat-value" id="stat-total">0</p>
+                            <span class="stat-desc">Detected overall</span>
+                        </div>
+                    </div>
+
+                    <!-- Severity breakdown card -->
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i data-lucide="pie-chart" class="icon-purple"></i>
+                                <h2>Severity Distribution</h2>
+                            </div>
+                        </div>
+                        <div class="chart-container-donut">
+                            <canvas id="severity-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Second Grid: Hourly Detection & Real-time Logs -->
+            <div class="dashboard-grid-lower">
+                <!-- Hourly Timeline -->
+                <div class="card chart-card-lower">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i data-lucide="trending-up" class="icon-emerald"></i>
+                            <h2>Detection History (Past 24 Hours)</h2>
+                        </div>
+                    </div>
+                    <div class="chart-container-line">
+                        <canvas id="timeline-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Recent Logs Table -->
+                <div class="card table-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i data-lucide="list" class="icon-amber"></i>
+                            <h2>Recent Detection Logs</h2>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="btn-refresh-logs">
+                            <i data-lucide="refresh-cw"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="table-container">
+                        <table class="logs-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Confidence</th>
+                                    <th>Severity</th>
+                                    <th>Preview</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logs-tbody">
+                                <!-- Dynamically filled -->
+                                <tr>
+                                    <td colspan="4" class="empty-state">No detections yet... Waiting for stream</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Configuration Modal / Section -->
+    <div class="modal" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i data-lucide="settings" style="vertical-align: middle; margin-right: 8px;"></i> System Settings</h3>
+                <button class="close-btn" id="close-settings"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="settings-form">
+                    <div class="form-group">
+                        <label for="conf-slider">Confidence Threshold: <span id="conf-val">0.25</span></label>
+                        <input type="range" id="conf-slider" min="0.1" max="0.9" step="0.05" value="0.25">
+                        <p class="form-help">Minimum confidence required to classify an object as a pothole.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="nms-slider">NMS Threshold: <span id="nms-val">0.45</span></label>
+                        <input type="range" id="nms-slider" min="0.1" max="0.9" step="0.05" value="0.45">
+                        <p class="form-help">Non-Maximum Suppression threshold (reduces overlapping boxes).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="source-input">Camera / Video Source</label>
+                        <input type="text" id="source-input" value="0" placeholder="Camera index e.g. 0, RTSP stream URL or Video Path">
+                        <p class="form-help">0 for local webcam, or use RTSP stream address/video file path.</p>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Apply Changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Preview Modal -->
+    <div class="modal" id="preview-modal">
+        <div class="modal-content preview-content">
+            <div class="modal-header">
+                <h3><i data-lucide="image" style="vertical-align: middle; margin-right: 8px;"></i> Detection Snapshot</h3>
+                <button class="close-btn" id="close-preview"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body preview-body">
+                <img id="preview-img" src="" alt="Snapshot of detected pothole">
+                <div class="preview-details">
+                    <span class="badge" id="preview-severity">HIGH</span>
+                    <span class="preview-meta" id="preview-time">Time: 2026-07-25 16:30:15 UTC</span>
+                    <span class="preview-meta" id="preview-conf">Confidence: 89%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
