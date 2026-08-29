@@ -27,9 +27,13 @@
             </div>
             
             <nav class="nav-menu">
-                <a href="#" class="nav-item active">
+                <a href="#" class="nav-item active" id="nav-dashboard">
                     <i data-lucide="layout-dashboard"></i>
                     <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" id="nav-upload">
+                    <i data-lucide="upload-cloud"></i>
+                    <span>Video Upload</span>
                 </a>
                 <a href="#history" class="nav-item" id="nav-history">
                     <i data-lucide="history"></i>
@@ -155,6 +159,127 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════ -->
+    <!-- Video Upload Section (hidden by default)                      -->
+    <!-- ══════════════════════════════════════════════════════════════ -->
+    <div id="upload-section" class="upload-section" style="display:none">
+        <div class="app-container">
+            <!-- (sidebar is shared — already rendered above) -->
+            <main class="main-content">
+                <header class="app-header">
+                    <div class="header-title">
+                        <h1>Video Upload Detection</h1>
+                        <p>Upload a video file to run realtime pothole analysis frame by frame</p>
+                    </div>
+                    <div class="header-actions">
+                        <span class="time-badge" id="upload-current-time">00:00:00 AM</span>
+                    </div>
+                </header>
+
+                <!-- Upload zone -->
+                <div class="upload-zone-wrapper">
+                    <div class="card upload-drop-card" id="upload-drop-zone">
+                        <div class="upload-icon-ring">
+                            <i data-lucide="upload-cloud"></i>
+                        </div>
+                        <h2 class="upload-title">Drop your video here</h2>
+                        <p class="upload-sub">or click to browse files</p>
+                        <p class="upload-meta">Supports: MP4, AVI, MOV, MKV, WEBM &nbsp;·&nbsp; Max 500 MB</p>
+                        <input type="file" id="video-file-input" accept=".mp4,.avi,.mov,.mkv,.webm,.m4v" hidden>
+                        <button class="btn btn-primary upload-browse-btn" id="upload-browse-btn">
+                            <i data-lucide="folder-open"></i> Browse File
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Progress bar (hidden until upload starts) -->
+                <div id="upload-progress-section" class="card upload-progress-card" style="display:none">
+                    <div class="upload-progress-header">
+                        <div class="upload-file-info">
+                            <i data-lucide="film" class="icon-indigo"></i>
+                            <div>
+                                <p class="upload-filename" id="upload-filename">video.mp4</p>
+                                <p class="upload-filesize" id="upload-filesize">0 MB</p>
+                            </div>
+                        </div>
+                        <button class="btn btn-danger btn-sm" id="upload-stop-btn">
+                            <i data-lucide="square"></i> Stop
+                        </button>
+                    </div>
+                    <div class="progress-bar-outer">
+                        <div class="progress-bar-inner" id="progress-bar"></div>
+                    </div>
+                    <div class="progress-labels">
+                        <span id="progress-pct">0%</span>
+                        <span id="progress-frames">0 / 0 frames</span>
+                    </div>
+                </div>
+
+                <!-- Detection results grid -->
+                <div id="upload-results-grid" class="upload-results-grid" style="display:none">
+                    <!-- MJPEG stream -->
+                    <div class="card video-card upload-video-card">
+                        <div class="card-header">
+                            <div class="card-title">
+                                <i data-lucide="clapperboard" class="icon-indigo"></i>
+                                <h2>Realtime Detection Stream</h2>
+                            </div>
+                            <span class="badge badge-emerald" id="upload-status-badge">PROCESSING</span>
+                        </div>
+                        <div class="video-container">
+                            <img id="upload-video-stream" src="" alt="Upload video stream">
+                        </div>
+                    </div>
+
+                    <!-- Stats panel -->
+                    <div class="telemetry-column">
+                        <!-- Total detections -->
+                        <div class="card stat-card pulse-blue">
+                            <div class="stat-icon icon-rose">
+                                <i data-lucide="alert-triangle"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3>Potholes Found</h3>
+                                <p class="stat-value" id="upload-stat-total">0</p>
+                                <span class="stat-desc">in this video</span>
+                            </div>
+                        </div>
+
+                        <!-- Severity breakdown -->
+                        <div class="card chart-card">
+                            <div class="card-header">
+                                <div class="card-title">
+                                    <i data-lucide="pie-chart" class="icon-purple"></i>
+                                    <h2>Severity</h2>
+                                </div>
+                            </div>
+                            <div class="upload-severity-grid">
+                                <div class="sev-item sev-high">
+                                    <span class="sev-count" id="upload-sev-high">0</span>
+                                    <span class="sev-label">High</span>
+                                </div>
+                                <div class="sev-item sev-medium">
+                                    <span class="sev-count" id="upload-sev-medium">0</span>
+                                    <span class="sev-label">Medium</span>
+                                </div>
+                                <div class="sev-item sev-low">
+                                    <span class="sev-count" id="upload-sev-low">0</span>
+                                    <span class="sev-label">Low</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Upload another -->
+                        <button class="btn btn-secondary btn-block" id="upload-reset-btn" style="display:none">
+                            <i data-lucide="refresh-cw"></i> Upload Another Video
+                        </button>
+                    </div>
+                </div>
+
+            </main>
+        </div>
     </div>
 
     <!-- Configuration Modal / Section -->

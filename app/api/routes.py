@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+import os
+import shutil
+import tempfile
+
+from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -8,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from app.database.connection import get_db
 from app.database.models import PotholeLog
 from app.config import CONFIDENCE_THRESHOLD, NMS_THRESHOLD, VIDEO_SOURCE
+from app.services.video_upload_service import upload_manager
 
 router = APIRouter()
 
@@ -140,3 +145,93 @@ def update_config(
             stream_handler.start()
             
     return {"status": "success", "message": "Configuration updated successfully"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Video Upload Endpoints
+# ─────────────────────────────────────────────────────────────
+
+# Allowed video MIME types / extensions
+_ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+_MAX_FILE_SIZE_MB   = 500
+
+
+@router.post("/upload_video")
+async def upload_video(file: UploadFile = File(...)):
+    """
+    Accept a video upload, persist it to a temp directory, and kick off
+    realtime pothole inference.  Returns a session_id used to poll
+    the feed and progress endpoints.
+    """
+    # Validate extension
+    filename = file.filename or "video"
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}"
+        )
+
+    # Save to a persistent temp file (VideoUploadSession owns deletion)
+    uploads_dir = tempfile.gettempdir()
+    tmp_path = os.path.join(uploads_dir, f"pothole_upload_{os.urandom(6).hex()}{ext}")
+    try:
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}")
+
+    # Enforce file size limit after writing (simpler than streaming size check)
+    size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
+    if size_mb > _MAX_FILE_SIZE_MB:
+        os.remove(tmp_path)
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({size_mb:.1f} MB). Limit is {_MAX_FILE_SIZE_MB} MB."
+        )
+
+    session_id = upload_manager.create_session(tmp_path)
+    return {
+        "status":     "started",
+        "session_id": session_id,
+        "filename":   filename,
+        "size_mb":    round(size_mb, 2),
+    }
+
+
+@router.get("/video_upload_feed/{session_id}")
+def video_upload_feed(session_id: str):
+    """
+    MJPEG stream of the annotated video frames for the given session.
+    Connect an <img> tag to this URL to see realtime detections.
+    """
+    session = upload_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired.")
+
+    return StreamingResponse(
+        session.get_frame_bytes(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@router.get("/video_upload_progress/{session_id}")
+def video_upload_progress(session_id: str):
+    """
+    JSON progress snapshot: current_frame, total_frames, percent,
+    detections_count, severity breakdown, and finished flag.
+    """
+    session = upload_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired.")
+    return session.get_progress()
+
+
+@router.delete("/video_upload_session/{session_id}")
+def delete_upload_session(session_id: str):
+    """Explicitly stop processing and clean up the uploaded file."""
+    session = upload_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired.")
+    upload_manager.delete_session(session_id)
+    return {"status": "deleted", "session_id": session_id}

@@ -252,7 +252,7 @@ with col_logs:
         logs_df = pd.DataFrame(log_records)
         
         # Display the logs table (excluding Image Path for display size)
-        st.dataframe(logs_df[["Time", "Confidence", "Severity"]], use_container_width=True, hide_index=True)
+        st.dataframe(logs_df[["Time", "Confidence", "Severity"]], width="stretch", hide_index=True)
 
         # Snapshot Preview functionality
         st.markdown("#### 🔍 Snapshot Inspector")
@@ -266,7 +266,7 @@ with col_logs:
         if selected_record:
             item = next(i for i in log_records if i["Record ID"] == selected_record)
             img_url = f"{API_URL}{item['Image Path']}"
-            st.image(img_url, caption=f"Pothole Snapshot (Record #{item['Record ID']} - Detected at {item['Time']})", use_container_width=True)
+            st.image(img_url, caption=f"Pothole Snapshot (Record #{item['Record ID']} - Detected at {item['Time']})", width="stretch")
 
 # Handle live autorefresh mechanism
 if live_reload:

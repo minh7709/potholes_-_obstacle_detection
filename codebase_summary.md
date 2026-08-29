@@ -2169,3 +2169,103 @@ body {
     }
 }
 ````
+
+---
+
+## 5. How to Run (Single Command)
+
+### File: `run_all.sh` (đã tạo trong project)
+
+Script này khởi động đồng thời FastAPI backend (port 8000) và Streamlit dashboard (port 8501) trong cùng một terminal.
+
+**Cách dùng:**
+```bash
+chmod +x run_all.sh
+./run_all.sh
+```
+Nhấn `Ctrl+C` để dừng tất cả.
+
+### Services & Ports
+
+| Service | Port | URL | Command |
+|---------|------|-----|---------|
+| FastAPI Backend | 8000 | http://localhost:8000 | `python main.py` |
+| Streamlit Dashboard | 8501 | http://localhost:8501 | `streamlit run app_streamlit.py` |
+| Web Dashboard (HTML/JS) | 8000 | http://localhost:8000 | (do FastAPI serve) |
+
+### API Endpoints
+
+| Endpoint | Method | Mô tả |
+|----------|--------|-------|
+| `/` | GET | Web Dashboard |
+| `/api/video_feed` | GET | MJPEG live stream |
+| `/api/detections?limit=N&severity=` | GET | Danh sách phát hiện |
+| `/api/stats` | GET | Thống kê real-time |
+| `/api/config` | GET | Xem cấu hình hiện tại |
+| `/api/config?confidence_threshold=&nms_threshold=&video_source=` | POST | Cập nhật cấu hình |
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────┐
+│              run_all.sh                      │
+│  (khởi động cả 2 service cùng lúc)           │
+└──────────────────┬──────────────────┬────────┘
+                   │                  │
+         ┌─────────▼──────┐  ┌───────▼──────────┐
+         │  main.py       │  │ app_streamlit.py │
+         │  (FastAPI)     │  │ (Streamlit)      │
+         │  Port 8000     │  │ Port 8501        │
+         └────────┬───────┘  └───────┬──────────┘
+                  │                  │
+         ┌────────▼───────┐         │
+         │  app/           │◄────────┘ (HTTP requests)
+         │  ├── api/       │
+         │  ├── database/  │
+         │  ├── services/  │
+         │  └── static/    │
+         └────────────────┘
+```
+
+### Cấu trúc thư mục & Chức năng
+
+| File/Folder | Chức năng |
+|-------------|-----------|
+| `main.py` | Entry point FastAPI server. Khởi tạo DB, camera stream, API routes. |
+| `app_streamlit.py` | Streamlit dashboard UI. Hiển thị live video, thống kê, logs. |
+| `app/config.py` | Quản lý cấu hình (model paths, thresholds, video source). |
+| `app/database/` | SQLAlchemy ORM + SQLite. Model `PotholeLog`. |
+| `app/services/detector.py` | YOLOv8 ONNX inference engine. |
+| `app/services/stream_handler.py` | Multi-threaded camera capture + inference pipeline. |
+| `app/api/routes.py` | REST API endpoints. |
+| `app/static/` | Web dashboard frontend (HTML/CSS/JS + Chart.js). |
+| `assets/` | Model files (`best.pt`, `best.onnx`). |
+| `export_model.py` | Convert `best.pt` → `best.onnx`. |
+| `verify_system.py` | Kiểm tra hệ thống (detector loading). |
+| `run_all.sh` | Script chạy tất cả services. |
+
+### Hướng dẫn cài đặt
+
+```bash
+# 1. Tạo virtual environment
+python -m venv .venv
+
+# 2. Kích hoạt
+source .venv/bin/activate  # Linux
+# .venv\Scripts\activate   # Windows
+
+# 3. Cài dependencies
+pip install -r requirements.txt
+
+# 4. Export ONNX model (nếu chưa có best.onnx)
+python export_model.py
+
+# 5. Chạy tất cả
+./run_all.sh
+```
+
+### Kiểm tra hệ thống
+
+```bash
+python verify_system.py
+```

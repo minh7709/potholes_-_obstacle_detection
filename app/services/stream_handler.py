@@ -1,4 +1,5 @@
 import os
+import sys
 import cv2
 import time
 import uuid
@@ -11,6 +12,8 @@ from app.config import VIDEO_SOURCE, SAVE_IMAGE_DIR, DETECT_COOLDOWN
 from app.services.detector import PotholeDetector
 from app.database.connection import SessionLocal
 from app.database.models import PotholeLog
+
+_IS_WINDOWS = sys.platform.startswith("win")
 
 def clean_video_source(source):
     """Sanitizes and normalizes the camera source (int for webcam, string for URLs)."""
@@ -85,7 +88,8 @@ class StreamHandler:
     def _create_capture(self):
         """Creates a cv2.VideoCapture with optimal backend."""
         if isinstance(self.source, int):
-            cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
+            backend = cv2.CAP_DSHOW if _IS_WINDOWS else cv2.CAP_V4L2
+            cap = cv2.VideoCapture(self.source, backend)
             # Lower resolution & FPS so laptop CPU isn't overwhelmed
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._CAPTURE_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._CAPTURE_HEIGHT)

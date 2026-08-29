@@ -303,6 +303,208 @@ document.addEventListener("DOMContentLoaded", () => {
         document.querySelector(".table-card").scrollIntoView({ behavior: "smooth" });
     });
 
+    // ──────────────────────────────────────────────────────────────────────
+    // Video Upload Tab
+    // ──────────────────────────────────────────────────────────────────────
+    const navUpload      = document.getElementById("nav-upload");
+    const navDashboard   = document.getElementById("nav-dashboard");
+    const uploadSection  = document.getElementById("upload-section");
+    const mainContent    = document.querySelector(".main-content");
+
+    // Sidebar lives in the outer .app-container — we need to keep it visible
+    // when the upload overlay is shown, so we just overlay the main area.
+    function showUploadSection() {
+        uploadSection.style.display = "block";
+        // Re-init icons inside upload section (Lucide is one-shot)
+        lucide.createIcons();
+        // Sync clock in upload header
+        const uploadClock = document.getElementById("upload-current-time");
+        if (uploadClock) {
+            uploadClock.textContent = new Date().toLocaleTimeString();
+            setInterval(() => { uploadClock.textContent = new Date().toLocaleTimeString(); }, 1000);
+        }
+    }
+
+    function hideUploadSection() {
+        uploadSection.style.display = "none";
+    }
+
+    navUpload.addEventListener("click", (e) => {
+        e.preventDefault();
+        document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+        navUpload.classList.add("active");
+        showUploadSection();
+    });
+
+    navDashboard.addEventListener("click", (e) => {
+        e.preventDefault();
+        document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+        navDashboard.classList.add("active");
+        hideUploadSection();
+    });
+
+    // ── Upload state ──────────────────────────────────────────────────────
+    let currentSessionId   = null;
+    let progressIntervalId = null;
+
+    // DOM refs (inside upload section — safe to grab after DOMContentLoaded)
+    const dropZone         = document.getElementById("upload-drop-zone");
+    const fileInput        = document.getElementById("video-file-input");
+    const browseBtn        = document.getElementById("upload-browse-btn");
+    const progressSection  = document.getElementById("upload-progress-section");
+    const resultsGrid      = document.getElementById("upload-results-grid");
+    const progressBar      = document.getElementById("progress-bar");
+    const progressPct      = document.getElementById("progress-pct");
+    const progressFrames   = document.getElementById("progress-frames");
+    const uploadFilename   = document.getElementById("upload-filename");
+    const uploadFilesize   = document.getElementById("upload-filesize");
+    const uploadStopBtn    = document.getElementById("upload-stop-btn");
+    const uploadResetBtn   = document.getElementById("upload-reset-btn");
+    const uploadVideoStream = document.getElementById("upload-video-stream");
+    const uploadStatusBadge = document.getElementById("upload-status-badge");
+    const uploadStatTotal  = document.getElementById("upload-stat-total");
+    const uploadSevHigh    = document.getElementById("upload-sev-high");
+    const uploadSevMedium  = document.getElementById("upload-sev-medium");
+    const uploadSevLow     = document.getElementById("upload-sev-low");
+
+    // ── Drag & drop handlers ──────────────────────────────────────────────
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("drag-over");
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("drag-over");
+        const file = e.dataTransfer.files[0];
+        if (file) startUpload(file);
+    });
+    dropZone.addEventListener("click", () => fileInput.click());
+    browseBtn.addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files[0]) startUpload(fileInput.files[0]);
+        fileInput.value = "";   // allow re-select of same file
+    });
+
+    // ── Core upload flow ──────────────────────────────────────────────────
+    async function startUpload(file) {
+        // Reset previous session if any
+        await cleanupSession();
+
+        // Show progress card
+        uploadFilename.textContent = file.name;
+        uploadFilesize.textContent = (file.size / (1024 * 1024)).toFixed(2) + " MB";
+        progressBar.style.width = "0%";
+        progressPct.textContent = "0%";
+        progressFrames.textContent = "0 / ? frames";
+        progressSection.style.display = "block";
+        resultsGrid.style.display     = "none";
+        uploadResetBtn.style.display  = "none";
+
+        // POST file to backend
+        const formData = new FormData();
+        formData.append("file", file);
+
+        let sessionId;
+        try {
+            const resp = await fetch("/api/upload_video", {
+                method: "POST",
+                body: formData,
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                alert("Upload failed: " + (err.detail || resp.statusText));
+                progressSection.style.display = "none";
+                return;
+            }
+            const data = await resp.json();
+            sessionId = data.session_id;
+        } catch (err) {
+            alert("Network error during upload: " + err.message);
+            progressSection.style.display = "none";
+            return;
+        }
+
+        currentSessionId = sessionId;
+
+        // Hook the MJPEG stream
+        uploadVideoStream.src = `/api/video_upload_feed/${sessionId}`;
+        resultsGrid.style.display = "grid";
+        uploadStatusBadge.textContent = "PROCESSING";
+        uploadStatusBadge.style.color = "";
+
+        // Poll progress
+        progressIntervalId = setInterval(() => pollProgress(sessionId), 500);
+    }
+
+    async function pollProgress(sessionId) {
+        if (!sessionId) return;
+        try {
+            const resp = await fetch(`/api/video_upload_progress/${sessionId}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            // Update progress bar
+            const pct = Math.min(data.percent, 100);
+            progressBar.style.width  = pct + "%";
+            progressPct.textContent  = pct.toFixed(1) + "%";
+            progressFrames.textContent = `${data.current_frame} / ${data.total_frames} frames`;
+
+            // Update stats
+            uploadStatTotal.textContent  = data.detections_count;
+            uploadSevHigh.textContent    = data.severity?.High   ?? 0;
+            uploadSevMedium.textContent  = data.severity?.Medium ?? 0;
+            uploadSevLow.textContent     = data.severity?.Low    ?? 0;
+
+            if (data.finished) {
+                clearInterval(progressIntervalId);
+                progressIntervalId = null;
+
+                progressBar.style.width  = "100%";
+                progressPct.textContent  = "100%";
+                uploadStatusBadge.textContent = "DONE";
+                uploadStatusBadge.classList.add("badge-emerald");
+                uploadResetBtn.style.display = "block";
+                lucide.createIcons();
+            }
+        } catch (_) { /* network blip — ignore */ }
+    }
+
+    // ── Stop / cleanup ────────────────────────────────────────────────────
+    async function cleanupSession() {
+        if (progressIntervalId) {
+            clearInterval(progressIntervalId);
+            progressIntervalId = null;
+        }
+        if (currentSessionId) {
+            try {
+                await fetch(`/api/video_upload_session/${currentSessionId}`, { method: "DELETE" });
+            } catch (_) {}
+            currentSessionId = null;
+        }
+        // Detach stream
+        if (uploadVideoStream) uploadVideoStream.src = "";
+    }
+
+    uploadStopBtn.addEventListener("click", async () => {
+        await cleanupSession();
+        progressSection.style.display = "none";
+        resultsGrid.style.display     = "none";
+    });
+
+    uploadResetBtn.addEventListener("click", async () => {
+        await cleanupSession();
+        progressSection.style.display = "none";
+        resultsGrid.style.display     = "none";
+        uploadStatTotal.textContent = "0";
+        uploadSevHigh.textContent   = "0";
+        uploadSevMedium.textContent = "0";
+        uploadSevLow.textContent    = "0";
+        uploadStatusBadge.textContent = "PROCESSING";
+        uploadStatusBadge.classList.remove("badge-emerald");
+        uploadResetBtn.style.display = "none";
+    });
+
     // Page initialization
     initCharts();
     fetchStats();
@@ -311,3 +513,4 @@ document.addEventListener("DOMContentLoaded", () => {
     // Auto-update dashboard telemetry every 3 seconds
     setInterval(fetchStats, 3000);
 });
+
