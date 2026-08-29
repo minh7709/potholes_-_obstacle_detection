@@ -1,335 +1,381 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pothole Detection Dashboard</title>
+    <title>RoadVision — Hệ thống Nhận diện Ổ gà AI</title>
+    <meta name="description" content="Hệ thống phân tích video nhận diện ổ gà thông minh với AI YOLO/ONNX và FastAPI.">
+    
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Stylesheet -->
+    
+    <!-- Custom Stylesheet -->
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <!-- Sidebar / Navigation -->
+    <div class="app-layout">
+        <!-- ══ Sidebar Navigation ══════════════════════════════════ -->
         <aside class="sidebar">
-            <div class="logo-area">
-                <div class="logo-icon">
+            <div class="brand">
+                <div class="brand-icon">
                     <i data-lucide="scan-eye"></i>
                 </div>
-                <span>RoadVision</span>
+                <div class="brand-text">
+                    <h2>RoadVision</h2>
+                    <span>AI Road Telemetry</span>
+                </div>
             </div>
-            
+
             <nav class="nav-menu">
-                <a href="#" class="nav-item active" id="nav-dashboard">
-                    <i data-lucide="layout-dashboard"></i>
-                    <span>Dashboard</span>
-                </a>
-                <a href="#" class="nav-item" id="nav-upload">
+                <button class="nav-item active" id="nav-upload">
                     <i data-lucide="upload-cloud"></i>
-                    <span>Video Upload</span>
-                </a>
-                <a href="#history" class="nav-item" id="nav-history">
+                    <span>Phân tích Video</span>
+                </button>
+                <button class="nav-item" id="nav-history">
                     <i data-lucide="history"></i>
-                    <span>Log History</span>
-                </a>
-                <a href="#settings" class="nav-item" id="nav-settings">
-                    <i data-lucide="settings"></i>
-                    <span>Settings</span>
-                </a>
+                    <span>Lịch sử Video</span>
+                </button>
+                <button class="nav-item" id="nav-stats">
+                    <i data-lucide="bar-chart-3"></i>
+                    <span>Thống kê AI</span>
+                </button>
             </nav>
-            
-            <div class="system-status">
-                <div class="status-indicator online"></div>
-                <div class="status-details">
-                    <p class="status-title">System Status</p>
-                    <p class="status-sub">Online & Analyzing</p>
+
+            <div class="sidebar-footer">
+                <button class="btn btn-outline-danger btn-block" id="btn-reset-db">
+                    <i data-lucide="trash-2"></i>
+                    <span>Reset Database</span>
+                </button>
+                <div class="system-status-box">
+                    <div class="status-indicator online"></div>
+                    <div class="status-text">
+                        <p class="status-label">Hệ thống AI</p>
+                        <p class="status-val">Sẵn sàng hoạt động</p>
+                    </div>
                 </div>
             </div>
         </aside>
 
-        <!-- Main Content Area -->
-        <main class="main-content">
-            <!-- Header -->
-            <header class="app-header">
-                <div class="header-title">
-                    <h1>Pothole Detection Dashboard</h1>
-                    <p>Real-time roadway inspection and telemetry analysis</p>
+        <!-- ══ Main Content ════════════════════════════════════════ -->
+        <main class="main-container">
+            <!-- App Header -->
+            <header class="top-header">
+                <div class="page-title">
+                    <h1 id="header-title">Nhận diện Ổ gà từ Video</h1>
+                    <p id="header-subtitle">Tải video lên để mô hình AI tự động quét từng khung hình và trích xuất các vị trí ổ gà</p>
                 </div>
-                <div class="header-actions">
-                    <span class="time-badge" id="current-time">00:00:00 AM</span>
+                <div class="header-right">
+                    <div class="clock-badge">
+                        <i data-lucide="clock"></i>
+                        <span id="live-clock">00:00:00</span>
+                    </div>
                 </div>
             </header>
 
-            <!-- Grid Layout -->
-            <div class="dashboard-grid">
-                <!-- Live Video Feed (Left Column) -->
-                <div class="card video-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <i data-lucide="video" class="icon-indigo"></i>
-                            <h2>Live Stream Feed</h2>
+            <!-- ── PAGE 1: Upload & Results ───────────────────────── -->
+            <section class="page-section active" id="section-upload">
+                <!-- Dropzone Area -->
+                <div class="card upload-card" id="upload-container">
+                    <div class="dropzone" id="drop-zone">
+                        <div class="dropzone-icon">
+                            <i data-lucide="cloud-arrow-up"></i>
                         </div>
-                        <span class="badge badge-danger blink">LIVE</span>
-                    </div>
-                    <div class="video-container">
-                        <img id="video-stream" src="/api/video_feed" alt="Video stream feed offline">
-                    </div>
-                </div>
-
-                <!-- Telemetry Cards (Right Column) -->
-                <div class="telemetry-column">
-                    <!-- Total Potholes Card -->
-                    <div class="card stat-card pulse-blue">
-                        <div class="stat-icon icon-rose">
-                            <i data-lucide="alert-triangle"></i>
+                        <h3>Kéo thả video vào đây để bắt đầu</h3>
+                        <p class="dropzone-sub">hoặc nhấp chuột để chọn video từ máy tính</p>
+                        <div class="file-badges">
+                            <span>MP4</span>
+                            <span>AVI</span>
+                            <span>MOV</span>
+                            <span>MKV</span>
+                            <span>WEBM</span>
+                            <span class="badge-accent">Tối đa 500 MB</span>
                         </div>
-                        <div class="stat-info">
-                            <h3>Total Potholes</h3>
-                            <p class="stat-value" id="stat-total">0</p>
-                            <span class="stat-desc">Detected overall</span>
-                        </div>
-                    </div>
-
-                    <!-- Severity breakdown card -->
-                    <div class="card chart-card">
-                        <div class="card-header">
-                            <div class="card-title">
-                                <i data-lucide="pie-chart" class="icon-purple"></i>
-                                <h2>Severity Distribution</h2>
-                            </div>
-                        </div>
-                        <div class="chart-container-donut">
-                            <canvas id="severity-chart"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Second Grid: Hourly Detection & Real-time Logs -->
-            <div class="dashboard-grid-lower">
-                <!-- Hourly Timeline -->
-                <div class="card chart-card-lower">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <i data-lucide="trending-up" class="icon-emerald"></i>
-                            <h2>Detection History (Past 24 Hours)</h2>
-                        </div>
-                    </div>
-                    <div class="chart-container-line">
-                        <canvas id="timeline-chart"></canvas>
-                    </div>
-                </div>
-
-                <!-- Recent Logs Table -->
-                <div class="card table-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <i data-lucide="list" class="icon-amber"></i>
-                            <h2>Recent Detection Logs</h2>
-                        </div>
-                        <button class="btn btn-secondary btn-sm" id="btn-refresh-logs">
-                            <i data-lucide="refresh-cw"></i> Refresh
+                        <input type="file" id="video-input" accept=".mp4,.avi,.mov,.mkv,.webm,.m4v" hidden>
+                        <button class="btn btn-primary" id="btn-select-file" type="button">
+                            <i data-lucide="folder-open"></i>
+                            <span>Chọn File Video</span>
                         </button>
                     </div>
-                    <div class="table-container">
-                        <table class="logs-table">
+
+                    <!-- Selected File Info (hidden initially) -->
+                    <div class="selected-file-panel" id="file-info-panel" style="display: none;">
+                        <div class="file-meta">
+                            <div class="file-icon"><i data-lucide="film"></i></div>
+                            <div class="file-details">
+                                <h4 id="selected-file-name">dashcam_sample.mp4</h4>
+                                <p id="selected-file-size">18.4 MB</p>
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn btn-secondary btn-sm" id="btn-change-file">Đổi file khác</button>
+                            <button class="btn btn-primary" id="btn-start-process">
+                                <i data-lucide="sparkles"></i>
+                                <span>Bắt đầu Phân tích AI</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Processing Progress (hidden initially) -->
+                    <div class="processing-panel" id="processing-panel" style="display: none;">
+                        <div class="spinner-ring"></div>
+                        <h4 id="processing-status-text">Đang tải video lên và chạy mô hình nhận diện AI...</h4>
+                        <p class="processing-hint">Quá trình này phân tích từng khung hình bằng YOLO ONNX Runtime. Vui lòng chờ trong giây lát.</p>
+                    </div>
+                </div>
+
+                <!-- Analysis Results Section (hidden until processed) -->
+                <div class="results-container" id="results-container" style="display: none;">
+                    
+                    <!-- Video Playback & KPI Summary Grid -->
+                    <div class="video-kpi-grid">
+                        <!-- Left: Video Player -->
+                        <div class="card video-player-card">
+                            <div class="card-header">
+                                <div class="card-title">
+                                    <i data-lucide="play-circle" class="text-indigo"></i>
+                                    <h3>Video Gốc Đã Tải Lên</h3>
+                                </div>
+                                <span class="badge badge-primary" id="res-video-status">Hoàn thành</span>
+                            </div>
+                            <div class="video-wrapper">
+                                <video id="result-video-player" controls preload="metadata">
+                                    Trình duyệt của bạn không hỗ trợ phát video HTML5.
+                                </video>
+                            </div>
+                            <div class="video-info-footer">
+                                <span id="res-video-name">video.mp4</span>
+                                <span id="res-video-meta">00:00 · 0 FPS · 0 Frames</span>
+                            </div>
+                        </div>
+
+                        <!-- Right: KPI Summary -->
+                        <div class="kpi-column">
+                            <div class="card kpi-card highlight-card">
+                                <div class="kpi-icon icon-rose">
+                                    <i data-lucide="alert-triangle"></i>
+                                </div>
+                                <div class="kpi-data">
+                                    <span class="kpi-label">Tổng ổ gà phát hiện</span>
+                                    <h2 class="kpi-value" id="kpi-total-potholes">0</h2>
+                                    <span class="kpi-desc">Trên toàn bộ video</span>
+                                </div>
+                            </div>
+
+                            <div class="kpi-stats-grid">
+                                <div class="card kpi-subcard">
+                                    <span class="kpi-sub-label">Khung hình có ổ gà</span>
+                                    <h3 class="kpi-sub-val text-indigo" id="kpi-detected-frames">0</h3>
+                                    <span class="kpi-sub-sub" id="kpi-total-frames-ratio">/ 0 frames</span>
+                                </div>
+
+                                <div class="card kpi-subcard">
+                                    <span class="kpi-sub-label">Độ tin cậy cao nhất</span>
+                                    <h3 class="kpi-sub-val text-emerald" id="kpi-max-conf">0%</h3>
+                                    <span class="kpi-sub-sub">Max Confidence</span>
+                                </div>
+                            </div>
+
+                            <!-- Severity Breakdown -->
+                            <div class="card severity-card">
+                                <h4>Phân bố Mức độ Nghiêm trọng</h4>
+                                <div class="severity-bars">
+                                    <div class="sev-item">
+                                        <div class="sev-header">
+                                            <span class="sev-tag tag-high">🔴 Nghiêm trọng (Cao)</span>
+                                            <span class="sev-count" id="kpi-sev-high">0</span>
+                                        </div>
+                                        <div class="sev-bar-bg"><div class="sev-bar-fill fill-high" id="bar-sev-high" style="width: 0%;"></div></div>
+                                    </div>
+                                    <div class="sev-item">
+                                        <div class="sev-header">
+                                            <span class="sev-tag tag-medium">🟠 Cần sửa chữa (Vừa)</span>
+                                            <span class="sev-count" id="kpi-sev-medium">0</span>
+                                        </div>
+                                        <div class="sev-bar-bg"><div class="sev-bar-fill fill-medium" id="bar-sev-medium" style="width: 0%;"></div></div>
+                                    </div>
+                                    <div class="sev-item">
+                                        <div class="sev-header">
+                                            <span class="sev-tag tag-low">🟢 Vết nứt nhẹ (Thấp)</span>
+                                            <span class="sev-count" id="kpi-sev-low">0</span>
+                                        </div>
+                                        <div class="sev-bar-bg"><div class="sev-bar-fill fill-low" id="bar-sev-low" style="width: 0%;"></div></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Frames Gallery Section -->
+                    <div class="gallery-section">
+                        <div class="gallery-toolbar">
+                            <div class="toolbar-title">
+                                <i data-lucide="images" class="text-indigo"></i>
+                                <h3>Danh sách Khung hình Chứa Ổ gà</h3>
+                                <span class="badge badge-neutral" id="gallery-total-badge">0 ảnh</span>
+                            </div>
+                            <div class="filter-group">
+                                <button class="filter-btn active" data-filter="all">Tất cả</button>
+                                <button class="filter-btn" data-filter="High">🔴 Cao</button>
+                                <button class="filter-btn" data-filter="Medium">🟠 Vừa</button>
+                                <button class="filter-btn" data-filter="Low">🟢 Nhẹ</button>
+                            </div>
+                        </div>
+
+                        <!-- Gallery Grid -->
+                        <div class="frames-grid" id="frames-grid">
+                            <!-- Injected by JavaScript -->
+                        </div>
+
+                        <!-- Empty State if no potholes detected -->
+                        <div class="card empty-gallery-card" id="empty-gallery" style="display: none;">
+                            <i data-lucide="check-circle-2"></i>
+                            <h4>Không phát hiện ổ gà nào trong video này</h4>
+                            <p>Mặt đường trong video đảm bảo chất lượng tốt hoặc độ tin cậy thấp hơn ngưỡng cài đặt.</p>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- ── PAGE 2: Video History ──────────────────────────── -->
+            <section class="page-section" id="section-history" style="display: none;">
+                <div class="card history-card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <i data-lucide="film" class="text-indigo"></i>
+                            <h3>Lịch sử Các Video Đã Phân Tích</h3>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="btn-refresh-history">
+                            <i data-lucide="refresh-cw"></i>
+                            <span>Làm mới</span>
+                        </button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>Time</th>
-                                    <th>Confidence</th>
-                                    <th>Severity</th>
-                                    <th>Preview</th>
+                                    <th>ID</th>
+                                    <th>Tên Video</th>
+                                    <th>Thời lượng</th>
+                                    <th>Tổng Frames</th>
+                                    <th>Số ổ gà</th>
+                                    <th>Frames có ổ gà</th>
+                                    <th>Thời gian tải lên</th>
+                                    <th>Hành động</th>
                                 </tr>
                             </thead>
-                            <tbody id="logs-tbody">
-                                <!-- Dynamically filled -->
-                                <tr>
-                                    <td colspan="4" class="empty-state">No detections yet... Waiting for stream</td>
-                                </tr>
+                            <tbody id="history-tbody">
+                                <tr><td colspan="8" class="text-center py-4">Đang tải danh sách...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
-            </div>
+            </section>
+
+            <!-- ── PAGE 3: Overall Statistics ─────────────────────── -->
+            <section class="page-section" id="section-stats" style="display: none;">
+                <div class="stats-overview-grid">
+                    <div class="card stat-metric-card">
+                        <div class="metric-icon icon-indigo"><i data-lucide="video"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-title">Tổng Video Đã Xử Lý</span>
+                            <h2 class="metric-num" id="stat-total-videos">0</h2>
+                        </div>
+                    </div>
+                    <div class="card stat-metric-card">
+                        <div class="metric-icon icon-rose"><i data-lucide="alert-octagon"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-title">Tổng Số Ổ Gà Ghi Nhận</span>
+                            <h2 class="metric-num" id="stat-total-potholes">0</h2>
+                        </div>
+                    </div>
+                    <div class="card stat-metric-card">
+                        <div class="metric-icon icon-emerald"><i data-lucide="image"></i></div>
+                        <div class="metric-info">
+                            <span class="metric-title">Tổng Khung Hình Lưu Trữ</span>
+                            <h2 class="metric-num" id="stat-total-frames">0</h2>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-4 p-4">
+                    <h3 class="mb-3">Phân bố Mức độ Toàn Hệ thống</h3>
+                    <div class="stats-severity-row" id="overall-severity-row">
+                        <!-- Rendered by JS -->
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 
-    <!-- ══════════════════════════════════════════════════════════════ -->
-    <!-- Video Upload Section (hidden by default)                      -->
-    <!-- ══════════════════════════════════════════════════════════════ -->
-    <div id="upload-section" class="upload-section" style="display:none">
-        <div class="app-container">
-            <!-- (sidebar is shared — already rendered above) -->
-            <main class="main-content">
-                <header class="app-header">
-                    <div class="header-title">
-                        <h1>Video Upload Detection</h1>
-                        <p>Upload a video file to run realtime pothole analysis frame by frame</p>
-                    </div>
-                    <div class="header-actions">
-                        <span class="time-badge" id="upload-current-time">00:00:00 AM</span>
-                    </div>
-                </header>
-
-                <!-- Upload zone -->
-                <div class="upload-zone-wrapper">
-                    <div class="card upload-drop-card" id="upload-drop-zone">
-                        <div class="upload-icon-ring">
-                            <i data-lucide="upload-cloud"></i>
-                        </div>
-                        <h2 class="upload-title">Drop your video here</h2>
-                        <p class="upload-sub">or click to browse files</p>
-                        <p class="upload-meta">Supports: MP4, AVI, MOV, MKV, WEBM &nbsp;·&nbsp; Max 500 MB</p>
-                        <input type="file" id="video-file-input" accept=".mp4,.avi,.mov,.mkv,.webm,.m4v" hidden>
-                        <button class="btn btn-primary upload-browse-btn" id="upload-browse-btn">
-                            <i data-lucide="folder-open"></i> Browse File
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Progress bar (hidden until upload starts) -->
-                <div id="upload-progress-section" class="card upload-progress-card" style="display:none">
-                    <div class="upload-progress-header">
-                        <div class="upload-file-info">
-                            <i data-lucide="film" class="icon-indigo"></i>
-                            <div>
-                                <p class="upload-filename" id="upload-filename">video.mp4</p>
-                                <p class="upload-filesize" id="upload-filesize">0 MB</p>
-                            </div>
-                        </div>
-                        <button class="btn btn-danger btn-sm" id="upload-stop-btn">
-                            <i data-lucide="square"></i> Stop
-                        </button>
-                    </div>
-                    <div class="progress-bar-outer">
-                        <div class="progress-bar-inner" id="progress-bar"></div>
-                    </div>
-                    <div class="progress-labels">
-                        <span id="progress-pct">0%</span>
-                        <span id="progress-frames">0 / 0 frames</span>
-                    </div>
-                </div>
-
-                <!-- Detection results grid -->
-                <div id="upload-results-grid" class="upload-results-grid" style="display:none">
-                    <!-- MJPEG stream -->
-                    <div class="card video-card upload-video-card">
-                        <div class="card-header">
-                            <div class="card-title">
-                                <i data-lucide="clapperboard" class="icon-indigo"></i>
-                                <h2>Realtime Detection Stream</h2>
-                            </div>
-                            <span class="badge badge-emerald" id="upload-status-badge">PROCESSING</span>
-                        </div>
-                        <div class="video-container">
-                            <img id="upload-video-stream" src="" alt="Upload video stream">
-                        </div>
-                    </div>
-
-                    <!-- Stats panel -->
-                    <div class="telemetry-column">
-                        <!-- Total detections -->
-                        <div class="card stat-card pulse-blue">
-                            <div class="stat-icon icon-rose">
-                                <i data-lucide="alert-triangle"></i>
-                            </div>
-                            <div class="stat-info">
-                                <h3>Potholes Found</h3>
-                                <p class="stat-value" id="upload-stat-total">0</p>
-                                <span class="stat-desc">in this video</span>
-                            </div>
-                        </div>
-
-                        <!-- Severity breakdown -->
-                        <div class="card chart-card">
-                            <div class="card-header">
-                                <div class="card-title">
-                                    <i data-lucide="pie-chart" class="icon-purple"></i>
-                                    <h2>Severity</h2>
-                                </div>
-                            </div>
-                            <div class="upload-severity-grid">
-                                <div class="sev-item sev-high">
-                                    <span class="sev-count" id="upload-sev-high">0</span>
-                                    <span class="sev-label">High</span>
-                                </div>
-                                <div class="sev-item sev-medium">
-                                    <span class="sev-count" id="upload-sev-medium">0</span>
-                                    <span class="sev-label">Medium</span>
-                                </div>
-                                <div class="sev-item sev-low">
-                                    <span class="sev-count" id="upload-sev-low">0</span>
-                                    <span class="sev-label">Low</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Upload another -->
-                        <button class="btn btn-secondary btn-block" id="upload-reset-btn" style="display:none">
-                            <i data-lucide="refresh-cw"></i> Upload Another Video
-                        </button>
-                    </div>
-                </div>
-
-            </main>
-        </div>
-    </div>
-
-    <!-- Configuration Modal / Section -->
-    <div class="modal" id="settings-modal">
-        <div class="modal-content">
+    <!-- ══ Image Detail Preview Modal ══════════════════════════════ -->
+    <div class="modal-backdrop" id="modal-preview">
+        <div class="modal-card">
             <div class="modal-header">
-                <h3><i data-lucide="settings" style="vertical-align: middle; margin-right: 8px;"></i> System Settings</h3>
-                <button class="close-btn" id="close-settings"><i data-lucide="x"></i></button>
+                <div class="modal-title-group">
+                    <h3 id="modal-frame-title">Chi tiết Khung hình #001</h3>
+                    <span class="badge" id="modal-frame-badge">High</span>
+                </div>
+                <button class="modal-close-btn" id="btn-close-modal">
+                    <i data-lucide="x"></i>
+                </button>
             </div>
             <div class="modal-body">
-                <form id="settings-form">
-                    <div class="form-group">
-                        <label for="conf-slider">Confidence Threshold: <span id="conf-val">0.25</span></label>
-                        <input type="range" id="conf-slider" min="0.1" max="0.9" step="0.05" value="0.25">
-                        <p class="form-help">Minimum confidence required to classify an object as a pothole.</p>
+                <div class="modal-image-wrap">
+                    <img id="modal-img" src="" alt="Frame snapshot">
+                </div>
+                <div class="modal-sidebar-info">
+                    <h4>Thông số nhận diện AI</h4>
+                    <div class="modal-meta-list">
+                        <div class="meta-row">
+                            <span>Thời điểm video:</span>
+                            <strong id="modal-timestamp">00:01.2s</strong>
+                        </div>
+                        <div class="meta-row">
+                            <span>Số lượng ổ gà:</span>
+                            <strong id="modal-pothole-count">1</strong>
+                        </div>
+                        <div class="meta-row">
+                            <span>Độ tin cậy cao nhất:</span>
+                            <strong class="text-emerald" id="modal-max-conf">92%</strong>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="nms-slider">NMS Threshold: <span id="nms-val">0.45</span></label>
-                        <input type="range" id="nms-slider" min="0.1" max="0.9" step="0.05" value="0.45">
-                        <p class="form-help">Non-Maximum Suppression threshold (reduces overlapping boxes).</p>
-                    </div>
-                    <div class="form-group">
-                        <label for="source-input">Camera / Video Source</label>
-                        <input type="text" id="source-input" value="0" placeholder="Camera index e.g. 0, RTSP stream URL or Video Path">
-                        <p class="form-help">0 for local webcam, or use RTSP stream address/video file path.</p>
-                    </div>
-                    <button type="submit" class="btn btn-primary btn-block">Apply Changes</button>
-                </form>
-            </div>
-        </div>
-    </div>
 
-    <!-- Image Preview Modal -->
-    <div class="modal" id="preview-modal">
-        <div class="modal-content preview-content">
-            <div class="modal-header">
-                <h3><i data-lucide="image" style="vertical-align: middle; margin-right: 8px;"></i> Detection Snapshot</h3>
-                <button class="close-btn" id="close-preview"><i data-lucide="x"></i></button>
-            </div>
-            <div class="modal-body preview-body">
-                <img id="preview-img" src="" alt="Snapshot of detected pothole">
-                <div class="preview-details">
-                    <span class="badge" id="preview-severity">HIGH</span>
-                    <span class="preview-meta" id="preview-time">Time: 2026-07-25 16:30:15 UTC</span>
-                    <span class="preview-meta" id="preview-conf">Confidence: 89%</span>
+                    <h4 class="mt-3">Danh sách độ tin cậy từng ổ gà:</h4>
+                    <div class="modal-conf-list" id="modal-conf-list">
+                        <!-- Injected by JS -->
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- ══ Confirm Reset Modal ══════════════════════════════════════ -->
+    <div class="modal-backdrop" id="modal-reset">
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h3>Xác nhận Reset Database</h3>
+                <button class="modal-close-btn" id="btn-close-reset-modal"><i data-lucide="x"></i></button>
+            </div>
+            <div class="modal-body p-4 text-center">
+                <div class="warning-icon-box">
+                    <i data-lucide="alert-triangle"></i>
+                </div>
+                <p class="text-muted mt-2">Hành động này sẽ xóa toàn bộ dữ liệu video, hình ảnh đã trích xuất và các bản ghi trong SQLite. Bạn có chắc chắn muốn tiếp tục?</p>
+                <div class="modal-actions mt-4">
+                    <button class="btn btn-secondary" id="btn-cancel-reset">Hủy bỏ</button>
+                    <button class="btn btn-danger" id="btn-confirm-reset">Đồng ý Xóa Tất cả</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script -->
     <script src="/static/app.js"></script>
 </body>
 </html>

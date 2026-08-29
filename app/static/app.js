@@ -2,515 +2,490 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize Lucide Icons
     lucide.createIcons();
 
-    // DOM Elements
-    const timeDisplay = document.getElementById("current-time");
-    const totalDisplay = document.getElementById("stat-total");
-    const logsTbody = document.getElementById("logs-tbody");
-    const btnRefreshLogs = document.getElementById("btn-refresh-logs");
-    
-    // Settings Modal elements
-    const settingsModal = document.getElementById("settings-modal");
-    const navSettings = document.getElementById("nav-settings");
-    const closeSettings = document.getElementById("close-settings");
-    const settingsForm = document.getElementById("settings-form");
-    const confSlider = document.getElementById("conf-slider");
-    const confVal = document.getElementById("conf-val");
-    const nmsSlider = document.getElementById("nms-slider");
-    const nmsVal = document.getElementById("nms-val");
-    const sourceInput = document.getElementById("source-input");
+    // ── Global App State ─────────────────────────────────────────────────
+    let currentSelectedFile = null;
+    let currentVideoData = null;
+    let currentActiveFilter = "all";
 
-    // Preview Modal elements
-    const previewModal = document.getElementById("preview-modal");
-    const closePreview = document.getElementById("close-preview");
-    const previewImg = document.getElementById("preview-img");
-    const previewSeverity = document.getElementById("preview-severity");
-    const previewTime = document.getElementById("preview-time");
-    const previewConf = document.getElementById("preview-conf");
+    // ── DOM References ───────────────────────────────────────────────────
+    // Navigation
+    const navUpload = document.getElementById("nav-upload");
+    const navHistory = document.getElementById("nav-history");
+    const navStats = document.getElementById("nav-stats");
+    const sectionUpload = document.getElementById("section-upload");
+    const sectionHistory = document.getElementById("section-history");
+    const sectionStats = document.getElementById("section-stats");
+    const headerTitle = document.getElementById("header-title");
+    const headerSubtitle = document.getElementById("header-subtitle");
+    const liveClock = document.getElementById("live-clock");
 
-    // Chart Variables
-    let severityChart = null;
-    let timelineChart = null;
+    // Upload & Process Components
+    const dropZone = document.getElementById("drop-zone");
+    const videoInput = document.getElementById("video-input");
+    const btnSelectFile = document.getElementById("btn-select-file");
+    const fileInfoPanel = document.getElementById("file-info-panel");
+    const selectedFileName = document.getElementById("selected-file-name");
+    const selectedFileSize = document.getElementById("selected-file-size");
+    const btnChangeFile = document.getElementById("btn-change-file");
+    const btnStartProcess = document.getElementById("btn-start-process");
+    const processingPanel = document.getElementById("processing-panel");
+    const uploadContainer = document.getElementById("upload-container");
 
-    // Time Clock
-    function updateClock() {
+    // Results Components
+    const resultsContainer = document.getElementById("results-container");
+    const resultVideoPlayer = document.getElementById("result-video-player");
+    const resVideoName = document.getElementById("res-video-name");
+    const resVideoMeta = document.getElementById("res-video-meta");
+    const kpiTotalPotholes = document.getElementById("kpi-total-potholes");
+    const kpiDetectedFrames = document.getElementById("kpi-detected-frames");
+    const kpiTotalFramesRatio = document.getElementById("kpi-total-frames-ratio");
+    const kpiMaxConf = document.getElementById("kpi-max-conf");
+    const kpiSevHigh = document.getElementById("kpi-sev-high");
+    const kpiSevMedium = document.getElementById("kpi-sev-medium");
+    const kpiSevLow = document.getElementById("kpi-sev-low");
+    const barSevHigh = document.getElementById("bar-sev-high");
+    const barSevMedium = document.getElementById("bar-sev-medium");
+    const barSevLow = document.getElementById("bar-sev-low");
+    const framesGrid = document.getElementById("frames-grid");
+    const emptyGallery = document.getElementById("empty-gallery");
+    const galleryTotalBadge = document.getElementById("gallery-total-badge");
+    const filterButtons = document.querySelectorAll(".filter-btn");
+
+    // History Components
+    const historyTbody = document.getElementById("history-tbody");
+    const btnRefreshHistory = document.getElementById("btn-refresh-history");
+
+    // Stats Components
+    const statTotalVideos = document.getElementById("stat-total-videos");
+    const statTotalPotholes = document.getElementById("stat-total-potholes");
+    const statTotalFrames = document.getElementById("stat-total-frames");
+    const overallSeverityRow = document.getElementById("overall-severity-row");
+
+    // Modals
+    const modalPreview = document.getElementById("modal-preview");
+    const btnCloseModal = document.getElementById("btn-close-modal");
+    const modalImg = document.getElementById("modal-img");
+    const modalFrameTitle = document.getElementById("modal-frame-title");
+    const modalFrameBadge = document.getElementById("modal-frame-badge");
+    const modalTimestamp = document.getElementById("modal-timestamp");
+    const modalPotholeCount = document.getElementById("modal-pothole-count");
+    const modalMaxConf = document.getElementById("modal-max-conf");
+    const modalConfList = document.getElementById("modal-conf-list");
+
+    const modalReset = document.getElementById("modal-reset");
+    const btnResetDb = document.getElementById("btn-reset-db");
+    const btnCloseResetModal = document.getElementById("btn-close-reset-modal");
+    const btnCancelReset = document.getElementById("btn-cancel-reset");
+    const btnConfirmReset = document.getElementById("btn-confirm-reset");
+
+    // ── Clock ────────────────────────────────────────────────────────────
+    function updateLiveClock() {
         const now = new Date();
-        timeDisplay.textContent = now.toLocaleTimeString();
+        liveClock.textContent = now.toLocaleTimeString("vi-VN");
     }
-    setInterval(updateClock, 1000);
-    updateClock();
+    setInterval(updateLiveClock, 1000);
+    updateLiveClock();
 
-    // Chart Initializations
-    function initCharts() {
-        // Doughnut Chart for Severity
-        const ctxSeverity = document.getElementById("severity-chart").getContext("2d");
-        severityChart = new Chart(ctxSeverity, {
-            type: "doughnut",
-            data: {
-                labels: ["Low", "Medium", "High"],
-                datasets: [{
-                    data: [0, 0, 0],
-                    backgroundColor: ["#10b981", "#f59e0b", "#f43f5e"],
-                    borderWidth: 0,
-                    hoverOffset: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: "bottom",
-                        labels: {
-                            color: "#cbd5e1",
-                            font: { family: "Inter", size: 12 }
-                        }
-                    }
-                },
-                cutout: "70%"
-            }
-        });
+    // ── Navigation Tabs ──────────────────────────────────────────────────
+    function switchTab(tabId) {
+        [navUpload, navHistory, navStats].forEach(n => n.classList.remove("active"));
+        [sectionUpload, sectionHistory, sectionStats].forEach(s => s.style.display = "none");
 
-        // Line Chart for Timeline
-        const ctxTimeline = document.getElementById("timeline-chart").getContext("2d");
-        timelineChart = new Chart(ctxTimeline, {
-            type: "line",
-            data: {
-                labels: Array.from({length: 24}, (_, i) => `${i}:00`),
-                datasets: [{
-                    label: "Detections",
-                    data: Array(24).fill(0),
-                    borderColor: "#6366f1",
-                    backgroundColor: "rgba(99, 102, 241, 0.15)",
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointBackgroundColor: "#a855f7",
-                    pointBorderColor: "#fff",
-                    pointRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    x: {
-                        grid: { color: "rgba(255, 255, 255, 0.05)" },
-                        ticks: { color: "#94a3b8", font: { family: "Inter", size: 10 } }
-                    },
-                    y: {
-                        grid: { color: "rgba(255, 255, 255, 0.05)" },
-                        ticks: { 
-                            color: "#94a3b8", 
-                            font: { family: "Inter", size: 10 },
-                            stepSize: 1,
-                            precision: 0
-                        },
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
+        if (tabId === "upload") {
+            navUpload.classList.add("active");
+            sectionUpload.style.display = "block";
+            headerTitle.textContent = "Nhận diện Ổ gà từ Video";
+            headerSubtitle.textContent = "Tải video lên để mô hình AI tự động quét từng khung hình và trích xuất các vị trí ổ gà";
+        } else if (tabId === "history") {
+            navHistory.classList.add("active");
+            sectionHistory.style.display = "block";
+            headerTitle.textContent = "Lịch sử Phân tích Video";
+            headerSubtitle.textContent = "Xem lại toàn bộ video đã xử lý và các khung hình ổ gà đã lưu trữ";
+            loadHistoryTable();
+        } else if (tabId === "stats") {
+            navStats.classList.add("active");
+            sectionStats.style.display = "block";
+            headerTitle.textContent = "Thống kê Hệ thống AI";
+            headerSubtitle.textContent = "Tổng hợp dữ liệu nhận diện và phân bố mức độ nghiêm trọng";
+            loadOverallStats();
+        }
+        lucide.createIcons();
     }
 
-    // Fetch Stats & Logs
-    async function fetchStats() {
+    navUpload.addEventListener("click", () => switchTab("upload"));
+    navHistory.addEventListener("click", () => switchTab("history"));
+    navStats.addEventListener("click", () => switchTab("stats"));
+
+    // ── File Selection & Drag Drop ───────────────────────────────────────
+    function handleSelectedFile(file) {
+        if (!file) return;
+        currentSelectedFile = file;
+        selectedFileName.textContent = file.name;
+        selectedFileSize.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+
+        dropZone.style.display = "none";
+        fileInfoPanel.style.display = "flex";
+        lucide.createIcons();
+    }
+
+    dropZone.addEventListener("click", () => videoInput.click());
+    btnSelectFile.addEventListener("click", (e) => {
+        e.stopPropagation();
+        videoInput.click();
+    });
+
+    videoInput.addEventListener("change", () => {
+        if (videoInput.files && videoInput.files[0]) {
+            handleSelectedFile(videoInput.files[0]);
+        }
+    });
+
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = "var(--primary)";
+        dropZone.style.background = "rgba(99, 102, 241, 0.08)";
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+        dropZone.style.borderColor = "";
+        dropZone.style.background = "";
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = "";
+        dropZone.style.background = "";
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            handleSelectedFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    btnChangeFile.addEventListener("click", () => {
+        currentSelectedFile = null;
+        videoInput.value = "";
+        fileInfoPanel.style.display = "none";
+        dropZone.style.display = "flex";
+        lucide.createIcons();
+    });
+
+    // ── Upload & Process Video ───────────────────────────────────────────
+    btnStartProcess.addEventListener("click", async () => {
+        if (!currentSelectedFile) return;
+
+        fileInfoPanel.style.display = "none";
+        processingPanel.style.display = "flex";
+        resultsContainer.style.display = "none";
+
+        const formData = new FormData();
+        formData.append("file", currentSelectedFile);
+
         try {
-            const res = await fetch("/api/stats");
-            const data = await res.json();
+            const response = await fetch("/api/upload-video", {
+                method: "POST",
+                body: formData
+            });
 
-            // Total Counter
-            totalDisplay.textContent = data.total;
-
-            // Update Severity Chart
-            if (severityChart) {
-                severityChart.data.datasets[0].data = [
-                    data.severity.Low || 0,
-                    data.severity.Medium || 0,
-                    data.severity.High || 0
-                ];
-                severityChart.update();
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || "Upload và xử lý thất bại");
             }
 
-            // Update Timeline Chart
-            if (timelineChart) {
-                const hours = Object.keys(data.hourly);
-                const counts = Object.values(data.hourly);
-                timelineChart.data.labels = hours.map(h => `${h}:00`);
-                timelineChart.data.datasets[0].data = counts;
-                timelineChart.update();
-            }
+            const result = await response.json();
+            currentVideoData = result.data;
 
-            // Update Logs Table
-            updateLogsTable(data.recent);
+            // Render Results
+            renderAnalysisResults(currentVideoData);
 
-        } catch (err) {
-            console.error("Error fetching stats:", err);
+            // Reset upload form state
+            processingPanel.style.display = "none";
+            dropZone.style.display = "flex";
+            videoInput.value = "";
+            currentSelectedFile = null;
+
+        } catch (error) {
+            alert(`Lỗi: ${error.message}`);
+            processingPanel.style.display = "none";
+            fileInfoPanel.style.display = "flex";
         }
+    });
+
+    // ── Render Analysis Results ──────────────────────────────────────────
+    function renderAnalysisResults(videoData) {
+        if (!videoData) return;
+
+        // 1. Video Player
+        resultVideoPlayer.src = videoData.video_url;
+        resultVideoPlayer.load();
+        resVideoName.textContent = videoData.filename;
+        resVideoMeta.textContent = `${videoData.duration_sec}s · ${videoData.fps} FPS · ${videoData.total_frames} Frames`;
+
+        // 2. KPI Summary
+        kpiTotalPotholes.textContent = videoData.potholes_count;
+        kpiDetectedFrames.textContent = videoData.detected_frames_count;
+        kpiTotalFramesRatio.textContent = `/ ${videoData.total_frames} frames`;
+
+        // Calculate severity and max confidence
+        const frames = videoData.frames || [];
+        let maxOverallConf = 0;
+        let highCount = 0;
+        let mediumCount = 0;
+        let lowCount = 0;
+
+        frames.forEach(f => {
+            if (f.max_confidence > maxOverallConf) maxOverallConf = f.max_confidence;
+            if (f.severity === "High") highCount++;
+            else if (f.severity === "Medium") mediumCount++;
+            else if (f.severity === "Low") lowCount++;
+        });
+
+        kpiMaxConf.textContent = `${Math.round(maxOverallConf * 100)}%`;
+        kpiSevHigh.textContent = highCount;
+        kpiSevMedium.textContent = mediumCount;
+        kpiSevLow.textContent = lowCount;
+
+        const totalDetected = frames.length || 1;
+        barSevHigh.style.width = `${(highCount / totalDetected) * 100}%`;
+        barSevMedium.style.width = `${(mediumCount / totalDetected) * 100}%`;
+        barSevLow.style.width = `${(lowCount / totalDetected) * 100}%`;
+
+        // 3. Render Frames Gallery
+        galleryTotalBadge.textContent = `${frames.length} ảnh`;
+        renderFramesGrid(frames);
+
+        // Show Results Section
+        resultsContainer.style.display = "block";
+        resultsContainer.scrollIntoView({ behavior: "smooth" });
+        lucide.createIcons();
     }
 
-    function updateLogsTable(recentLogs) {
-        if (!recentLogs || recentLogs.length === 0) {
-            logsTbody.innerHTML = `
-                <tr>
-                    <td colspan="4" class="empty-state">No detections yet... Waiting for stream</td>
-                </tr>
-            `;
+    // ── Render Frames Grid ───────────────────────────────────────────────
+    function renderFramesGrid(frames) {
+        framesGrid.innerHTML = "";
+
+        const filtered = currentActiveFilter === "all" 
+            ? frames 
+            : frames.filter(f => f.severity.toLowerCase() === currentActiveFilter.toLowerCase());
+
+        if (filtered.length === 0) {
+            emptyGallery.style.display = "flex";
             return;
+        } else {
+            emptyGallery.style.display = "none";
         }
 
-        logsTbody.innerHTML = recentLogs.map(log => {
-            const date = new Date(log.timestamp);
-            const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            
-            let badgeClass = "badge-success";
-            if (log.severity === "High") badgeClass = "badge-danger";
-            else if (log.severity === "Medium") badgeClass = "badge-warning";
+        filtered.forEach(frame => {
+            const card = document.createElement("div");
+            card.className = "frame-card";
 
+            const badgeClass = frame.severity === "High" ? "badge-danger" 
+                             : frame.severity === "Medium" ? "badge-warning" 
+                             : "badge-success";
+
+            // Render confidence chips for each pothole detected in this frame
+            const confs = frame.confidences || [];
+            const confChipsHtml = confs.map((c, idx) => {
+                const pct = Math.round(c * 100);
+                const chipClass = pct >= 80 ? "chip-high" : pct >= 50 ? "chip-medium" : "chip-low";
+                return `<span class="conf-chip ${chipClass}">#${idx + 1}: ${pct}%</span>`;
+            }).join("");
+
+            card.innerHTML = `
+                <div class="frame-thumbnail">
+                    <img src="${frame.image_path}" alt="Frame #${frame.frame_number}" loading="lazy">
+                    <div class="frame-hover-overlay">
+                        <i data-lucide="maximize-2"></i>
+                        <span>Xem chi tiết</span>
+                    </div>
+                </div>
+                <div class="frame-card-body">
+                    <div class="frame-row-top">
+                        <span class="frame-num">Frame #${frame.frame_number}</span>
+                        <span class="badge ${badgeClass}">${frame.severity}</span>
+                    </div>
+                    <div class="frame-row-top">
+                        <span class="frame-time">⏱️ ${frame.timestamp_sec}s</span>
+                        <span class="text-emerald" style="font-weight: 600; font-size: 0.85rem;">Max: ${Math.round(frame.max_confidence * 100)}%</span>
+                    </div>
+                    <div class="conf-badges-wrap">
+                        ${confChipsHtml}
+                    </div>
+                </div>
+            `;
+
+            card.addEventListener("click", () => openFrameModal(frame));
+            framesGrid.appendChild(card);
+        });
+
+        lucide.createIcons();
+    }
+
+    // ── Filter Buttons ───────────────────────────────────────────────────
+    filterButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            filterButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            currentActiveFilter = btn.getAttribute("data-filter");
+            if (currentVideoData && currentVideoData.frames) {
+                renderFramesGrid(currentVideoData.frames);
+            }
+        });
+    });
+
+    // ── Frame Detail Modal ───────────────────────────────────────────────
+    function openFrameModal(frame) {
+        modalImg.src = frame.image_path;
+        modalFrameTitle.textContent = `Khung hình #${frame.frame_number}`;
+        modalTimestamp.textContent = `${frame.timestamp_sec} giây`;
+        modalPotholeCount.textContent = `${frame.pothole_count} ổ gà`;
+        modalMaxConf.textContent = `${Math.round(frame.max_confidence * 100)}%`;
+
+        modalFrameBadge.className = `badge ${frame.severity === "High" ? "badge-danger" : frame.severity === "Medium" ? "badge-warning" : "badge-success"}`;
+        modalFrameBadge.textContent = frame.severity;
+
+        // Render conf list
+        const confs = frame.confidences || [];
+        modalConfList.innerHTML = confs.map((c, idx) => {
+            const pct = Math.round(c * 100);
             return `
-                <tr>
-                    <td>${formattedTime}</td>
-                    <td>${Math.round(log.confidence * 100)}%</td>
-                    <td><span class="badge ${badgeClass}">${log.severity}</span></td>
-                    <td>
-                        <button class="btn-link view-snapshot-btn" data-url="${log.image_path}" data-severity="${log.severity}" data-time="${date.toLocaleString()}" data-conf="${Math.round(log.confidence * 100)}">
-                            View Image
-                        </button>
-                    </td>
-                </tr>
+                <div class="modal-conf-item">
+                    <span>Ổ gà #${idx + 1}</span>
+                    <strong class="text-emerald">${pct}%</strong>
+                </div>
             `;
         }).join("");
 
-        // Attach event listeners to new snapshot buttons
-        document.querySelectorAll(".view-snapshot-btn").forEach(btn => {
-            btn.addEventListener("click", (e) => {
-                const target = e.target;
-                previewImg.src = target.getAttribute("data-url");
-                previewSeverity.textContent = target.getAttribute("data-severity");
-                previewTime.textContent = `Time: ${target.getAttribute("data-time")}`;
-                previewConf.textContent = `Confidence: ${target.getAttribute("data-conf")}%`;
-                
-                // Color severity badge in modal
-                previewSeverity.className = "badge";
-                const sev = target.getAttribute("data-severity");
-                if (sev === "High") previewSeverity.classList.add("badge-danger");
-                else if (sev === "Medium") previewSeverity.classList.add("badge-warning");
-                else previewSeverity.classList.add("badge-success");
-
-                previewModal.classList.add("active");
-            });
-        });
-    }
-
-    // Config Actions
-    async function fetchConfig() {
-        try {
-            const res = await fetch("/api/config");
-            const config = await res.json();
-
-            confSlider.value = config.confidence_threshold;
-            confVal.textContent = config.confidence_threshold;
-            
-            nmsSlider.value = config.nms_threshold;
-            nmsVal.textContent = config.nms_threshold;
-
-            sourceInput.value = config.video_source;
-        } catch (err) {
-            console.error("Error loading config:", err);
-        }
-    }
-
-    // Modal Control
-    navSettings.addEventListener("click", (e) => {
-        e.preventDefault();
-        fetchConfig();
-        settingsModal.classList.add("active");
-    });
-
-    closeSettings.addEventListener("click", () => {
-        settingsModal.classList.remove("active");
-    });
-
-    closePreview.addEventListener("click", () => {
-        previewModal.classList.remove("active");
-        previewImg.src = "";
-    });
-
-    // Close modals on clicking backdrop
-    window.addEventListener("click", (e) => {
-        if (e.target === settingsModal) settingsModal.classList.remove("active");
-        if (e.target === previewModal) {
-            previewModal.classList.remove("active");
-            previewImg.src = "";
-        }
-    });
-
-    // Handle Form submission
-    settingsForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const conf = confSlider.value;
-        const nms = nmsSlider.value;
-        const source = sourceInput.value;
-
-        try {
-            const res = await fetch(`/api/config?confidence_threshold=${conf}&nms_threshold=${nms}&video_source=${source}`, {
-                method: "POST"
-            });
-            const result = await res.json();
-            if (result.status === "success") {
-                settingsModal.classList.remove("active");
-                fetchStats();
-            } else {
-                alert("Failed to update configurations: " + result.message);
-            }
-        } catch (err) {
-            console.error("Error updating config:", err);
-            alert("Error communicating with server.");
-        }
-    });
-
-    // Slider range update values
-    confSlider.addEventListener("input", (e) => {
-        confVal.textContent = e.target.value;
-    });
-
-    nmsSlider.addEventListener("input", (e) => {
-        nmsVal.textContent = e.target.value;
-    });
-
-    // Table manual refresh
-    btnRefreshLogs.addEventListener("click", () => {
-        fetchStats();
-    });
-
-    // Menu active class toggling
-    document.querySelectorAll(".nav-item").forEach(item => {
-        if (item.id !== "nav-settings") {
-            item.addEventListener("click", () => {
-                document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
-                item.classList.add("active");
-            });
-        }
-    });
-
-    // Navigation links behaviors
-    const navHistory = document.getElementById("nav-history");
-    navHistory.addEventListener("click", (e) => {
-        e.preventDefault();
-        // Scroll to table card
-        document.querySelector(".table-card").scrollIntoView({ behavior: "smooth" });
-    });
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Video Upload Tab
-    // ──────────────────────────────────────────────────────────────────────
-    const navUpload      = document.getElementById("nav-upload");
-    const navDashboard   = document.getElementById("nav-dashboard");
-    const uploadSection  = document.getElementById("upload-section");
-    const mainContent    = document.querySelector(".main-content");
-
-    // Sidebar lives in the outer .app-container — we need to keep it visible
-    // when the upload overlay is shown, so we just overlay the main area.
-    function showUploadSection() {
-        uploadSection.style.display = "block";
-        // Re-init icons inside upload section (Lucide is one-shot)
+        modalPreview.classList.add("active");
         lucide.createIcons();
-        // Sync clock in upload header
-        const uploadClock = document.getElementById("upload-current-time");
-        if (uploadClock) {
-            uploadClock.textContent = new Date().toLocaleTimeString();
-            setInterval(() => { uploadClock.textContent = new Date().toLocaleTimeString(); }, 1000);
-        }
     }
 
-    function hideUploadSection() {
-        uploadSection.style.display = "none";
-    }
-
-    navUpload.addEventListener("click", (e) => {
-        e.preventDefault();
-        document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
-        navUpload.classList.add("active");
-        showUploadSection();
+    btnCloseModal.addEventListener("click", () => modalPreview.classList.remove("active"));
+    modalPreview.addEventListener("click", (e) => {
+        if (e.target === modalPreview) modalPreview.classList.remove("active");
     });
 
-    navDashboard.addEventListener("click", (e) => {
-        e.preventDefault();
-        document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
-        navDashboard.classList.add("active");
-        hideUploadSection();
-    });
-
-    // ── Upload state ──────────────────────────────────────────────────────
-    let currentSessionId   = null;
-    let progressIntervalId = null;
-
-    // DOM refs (inside upload section — safe to grab after DOMContentLoaded)
-    const dropZone         = document.getElementById("upload-drop-zone");
-    const fileInput        = document.getElementById("video-file-input");
-    const browseBtn        = document.getElementById("upload-browse-btn");
-    const progressSection  = document.getElementById("upload-progress-section");
-    const resultsGrid      = document.getElementById("upload-results-grid");
-    const progressBar      = document.getElementById("progress-bar");
-    const progressPct      = document.getElementById("progress-pct");
-    const progressFrames   = document.getElementById("progress-frames");
-    const uploadFilename   = document.getElementById("upload-filename");
-    const uploadFilesize   = document.getElementById("upload-filesize");
-    const uploadStopBtn    = document.getElementById("upload-stop-btn");
-    const uploadResetBtn   = document.getElementById("upload-reset-btn");
-    const uploadVideoStream = document.getElementById("upload-video-stream");
-    const uploadStatusBadge = document.getElementById("upload-status-badge");
-    const uploadStatTotal  = document.getElementById("upload-stat-total");
-    const uploadSevHigh    = document.getElementById("upload-sev-high");
-    const uploadSevMedium  = document.getElementById("upload-sev-medium");
-    const uploadSevLow     = document.getElementById("upload-sev-low");
-
-    // ── Drag & drop handlers ──────────────────────────────────────────────
-    dropZone.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("drag-over");
-    });
-    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
-    dropZone.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("drag-over");
-        const file = e.dataTransfer.files[0];
-        if (file) startUpload(file);
-    });
-    dropZone.addEventListener("click", () => fileInput.click());
-    browseBtn.addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
-    fileInput.addEventListener("change", () => {
-        if (fileInput.files[0]) startUpload(fileInput.files[0]);
-        fileInput.value = "";   // allow re-select of same file
-    });
-
-    // ── Core upload flow ──────────────────────────────────────────────────
-    async function startUpload(file) {
-        // Reset previous session if any
-        await cleanupSession();
-
-        // Show progress card
-        uploadFilename.textContent = file.name;
-        uploadFilesize.textContent = (file.size / (1024 * 1024)).toFixed(2) + " MB";
-        progressBar.style.width = "0%";
-        progressPct.textContent = "0%";
-        progressFrames.textContent = "0 / ? frames";
-        progressSection.style.display = "block";
-        resultsGrid.style.display     = "none";
-        uploadResetBtn.style.display  = "none";
-
-        // POST file to backend
-        const formData = new FormData();
-        formData.append("file", file);
-
-        let sessionId;
+    // ── History Table Loader ─────────────────────────────────────────────
+    async function loadHistoryTable() {
+        historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4">Đang tải danh sách video...</td></tr>`;
         try {
-            const resp = await fetch("/api/upload_video", {
-                method: "POST",
-                body: formData,
-            });
-            if (!resp.ok) {
-                const err = await resp.json();
-                alert("Upload failed: " + (err.detail || resp.statusText));
-                progressSection.style.display = "none";
+            const res = await fetch("/api/videos");
+            const videos = await res.json();
+
+            if (!videos || videos.length === 0) {
+                historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">Chưa có video nào được xử lý. Hãy tải lên video mới!</td></tr>`;
                 return;
             }
-            const data = await resp.json();
-            sessionId = data.session_id;
+
+            historyTbody.innerHTML = videos.map(v => {
+                const dt = v.uploaded_at ? new Date(v.uploaded_at).toLocaleString("vi-VN") : "N/A";
+                return `
+                    <tr>
+                        <td><strong>#${v.id}</strong></td>
+                        <td>${v.filename}</td>
+                        <td>${v.duration_sec}s</td>
+                        <td>${v.total_frames}</td>
+                        <td><span class="badge badge-danger">${v.potholes_count} ổ gà</span></td>
+                        <td>${v.detected_frames_count} frames</td>
+                        <td>${dt}</td>
+                        <td>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button class="btn btn-secondary btn-sm" onclick="viewHistoryVideo(${v.id})">
+                                    <i data-lucide="eye"></i> Xem lại
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" onclick="deleteHistoryVideo(${v.id})">
+                                    <i data-lucide="trash"></i> Xóa
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
+
+            lucide.createIcons();
         } catch (err) {
-            alert("Network error during upload: " + err.message);
-            progressSection.style.display = "none";
-            return;
+            historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-rose">Lỗi khi tải lịch sử: ${err.message}</td></tr>`;
         }
-
-        currentSessionId = sessionId;
-
-        // Hook the MJPEG stream
-        uploadVideoStream.src = `/api/video_upload_feed/${sessionId}`;
-        resultsGrid.style.display = "grid";
-        uploadStatusBadge.textContent = "PROCESSING";
-        uploadStatusBadge.style.color = "";
-
-        // Poll progress
-        progressIntervalId = setInterval(() => pollProgress(sessionId), 500);
     }
 
-    async function pollProgress(sessionId) {
-        if (!sessionId) return;
+    btnRefreshHistory.addEventListener("click", loadHistoryTable);
+
+    // Global helper to view historical video
+    window.viewHistoryVideo = async function(videoId) {
         try {
-            const resp = await fetch(`/api/video_upload_progress/${sessionId}`);
-            if (!resp.ok) return;
-            const data = await resp.json();
+            const res = await fetch(`/api/videos/${videoId}`);
+            if (!res.ok) throw new Error("Không thể tải thông tin video");
+            const videoData = await res.json();
+            currentVideoData = videoData;
+            switchTab("upload");
+            renderAnalysisResults(videoData);
+        } catch (err) {
+            alert(`Lỗi: ${err.message}`);
+        }
+    };
 
-            // Update progress bar
-            const pct = Math.min(data.percent, 100);
-            progressBar.style.width  = pct + "%";
-            progressPct.textContent  = pct.toFixed(1) + "%";
-            progressFrames.textContent = `${data.current_frame} / ${data.total_frames} frames`;
+    // Global helper to delete historical video
+    window.deleteHistoryVideo = async function(videoId) {
+        if (!confirm(`Bạn có chắc chắn muốn xóa video #${videoId} cùng toàn bộ ảnh liên quan?`)) return;
+        try {
+            const res = await fetch(`/api/videos/${videoId}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Xóa video thất bại");
+            loadHistoryTable();
+        } catch (err) {
+            alert(`Lỗi: ${err.message}`);
+        }
+    };
 
-            // Update stats
-            uploadStatTotal.textContent  = data.detections_count;
-            uploadSevHigh.textContent    = data.severity?.High   ?? 0;
-            uploadSevMedium.textContent  = data.severity?.Medium ?? 0;
-            uploadSevLow.textContent     = data.severity?.Low    ?? 0;
+    // ── Overall Stats Loader ─────────────────────────────────────────────
+    async function loadOverallStats() {
+        try {
+            const res = await fetch("/api/stats");
+            const stats = await res.json();
 
-            if (data.finished) {
-                clearInterval(progressIntervalId);
-                progressIntervalId = null;
+            statTotalVideos.textContent = stats.total_videos || 0;
+            statTotalPotholes.textContent = stats.total_potholes || 0;
+            statTotalFrames.textContent = stats.total_detected_frames || 0;
 
-                progressBar.style.width  = "100%";
-                progressPct.textContent  = "100%";
-                uploadStatusBadge.textContent = "DONE";
-                uploadStatusBadge.classList.add("badge-emerald");
-                uploadResetBtn.style.display = "block";
-                lucide.createIcons();
-            }
-        } catch (_) { /* network blip — ignore */ }
+            const sev = stats.severity || { High: 0, Medium: 0, Low: 0 };
+            overallSeverityRow.innerHTML = `
+                <div class="card p-3">
+                    <span class="text-muted">🔴 Mức độ Cao (Nghiêm trọng)</span>
+                    <h2 class="text-rose mt-2">${sev.High} khung hình</h2>
+                </div>
+                <div class="card p-3">
+                    <span class="text-muted">🟠 Mức độ Vừa (Cần sửa)</span>
+                    <h2 class="text-amber mt-2">${sev.Medium} khung hình</h2>
+                </div>
+                <div class="card p-3">
+                    <span class="text-muted">🟢 Mức độ Nhẹ (Rạn nứt)</span>
+                    <h2 class="text-emerald mt-2">${sev.Low} khung hình</h2>
+                </div>
+            `;
+        } catch (err) {
+            console.error("Failed to load stats:", err);
+        }
     }
 
-    // ── Stop / cleanup ────────────────────────────────────────────────────
-    async function cleanupSession() {
-        if (progressIntervalId) {
-            clearInterval(progressIntervalId);
-            progressIntervalId = null;
-        }
-        if (currentSessionId) {
-            try {
-                await fetch(`/api/video_upload_session/${currentSessionId}`, { method: "DELETE" });
-            } catch (_) {}
-            currentSessionId = null;
-        }
-        // Detach stream
-        if (uploadVideoStream) uploadVideoStream.src = "";
-    }
+    // ── Database Reset Confirmation ──────────────────────────────────────
+    btnResetDb.addEventListener("click", () => modalReset.classList.add("active"));
+    btnCloseResetModal.addEventListener("click", () => modalReset.classList.remove("active"));
+    btnCancelReset.addEventListener("click", () => modalReset.classList.remove("active"));
 
-    uploadStopBtn.addEventListener("click", async () => {
-        await cleanupSession();
-        progressSection.style.display = "none";
-        resultsGrid.style.display     = "none";
+    btnConfirmReset.addEventListener("click", async () => {
+        try {
+            const res = await fetch("/api/reset-db", { method: "POST" });
+            const data = await res.json();
+            modalReset.classList.remove("active");
+            alert(data.message || "Database đã được reset thành công!");
+            
+            // Clear current view
+            currentVideoData = null;
+            resultsContainer.style.display = "none";
+            fileInfoPanel.style.display = "none";
+            dropZone.style.display = "flex";
+            
+            switchTab("upload");
+        } catch (err) {
+            alert(`Lỗi reset: ${err.message}`);
+        }
     });
 
-    uploadResetBtn.addEventListener("click", async () => {
-        await cleanupSession();
-        progressSection.style.display = "none";
-        resultsGrid.style.display     = "none";
-        uploadStatTotal.textContent = "0";
-        uploadSevHigh.textContent   = "0";
-        uploadSevMedium.textContent = "0";
-        uploadSevLow.textContent    = "0";
-        uploadStatusBadge.textContent = "PROCESSING";
-        uploadStatusBadge.classList.remove("badge-emerald");
-        uploadResetBtn.style.display = "none";
-    });
-
-    // Page initialization
-    initCharts();
-    fetchStats();
-    fetchConfig();
-
-    // Auto-update dashboard telemetry every 3 seconds
-    setInterval(fetchStats, 3000);
 });
-

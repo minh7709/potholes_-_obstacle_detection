@@ -15,13 +15,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", 0.25))
 NMS_THRESHOLD = float(os.environ.get("NMS_THRESHOLD", 0.45))
 
-# Video Source (0 for webcam, RTSP url string, or local video file path)
-# Default is 0 (webcam). If webcam is not available, we will try to handle it.
-VIDEO_SOURCE = os.environ.get("VIDEO_SOURCE", "0")
+# Static storage directories
+STATIC_DIR = os.path.join(BASE_DIR, "app", "static")
+VIDEOS_DIR = os.path.join(STATIC_DIR, "videos")
+FRAMES_DIR = os.path.join(STATIC_DIR, "frames")
 
-# Logging Configuration
-DETECT_COOLDOWN = float(os.environ.get("DETECT_COOLDOWN", 2.0))  # seconds
-SAVE_IMAGE_DIR = os.path.join(BASE_DIR, "app", "static", "potholes")
-
-# Ensure image directory exists
-os.makedirs(SAVE_IMAGE_DIR, exist_ok=True)
+# Ensure static directories exist
+os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(VIDEOS_DIR, exist_ok=True)
+os.makedirs(FRAMES_DIR, exist_ok=True)
