@@ -1,286 +1,229 @@
-import os
+"""FCW video processing for the web app.
+
+Replaces the old ONNX pothole detector while keeping the public surface the API
+routes expect:
+
+    results = detector.process_video(video_path=..., video_id=...)
+    results["total_frames"], ["fps"], ["duration_sec"], ["warning_frames"]
+
+Only the image processing changed: YOLO + ByteTrack + Depth Anything V2 instead of
+the pothole ONNX model.
+
+Performance
+-----------
+This reuses the same FrameSampler as the CLI, so the web path gets the same
+optimisations:
+
+  * frames decimated to ``processing.target_fps`` (a 60 FPS phone video is
+    sampled at 10 FPS, so it costs about the same as a 30 FPS one)
+  * frames downscaled to ``input.max_width/height`` before inference
+  * Depth Anything V2 run every ``depth.interval`` frames
+
+Timestamps come from the ORIGINAL frame index, never from a processed-frame
+counter. TTC divides by delta time, so re-timing the samples would silently
+corrupt every speed in the output.
+
+Lazy model loading
+------------------
+The pipeline is built on first use, not at import. Browsing history or opening
+the page should not pay the YOLO + depth load cost.
+"""
+
 import json
+import os
+import time
+
 import cv2
-import numpy as np
-import onnxruntime as ort
-from app.config import ONNX_MODEL_PATH, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, FRAMES_DIR
 
-class PotholeDetector:
-    def __init__(self, model_path=ONNX_MODEL_PATH, conf_threshold=CONFIDENCE_THRESHOLD, nms_threshold=NMS_THRESHOLD):
-        self.model_path = model_path
-        self.conf_threshold = conf_threshold
-        self.nms_threshold = nms_threshold
-        self.session = None
-        self.input_name = None
-        self.output_names = None
-        self.input_shape = None
-        self.class_names = {0: "pothole"}
-        
-        self._load_model()
-        
-    def _load_model(self):
-        if not os.path.exists(self.model_path):
-            print(f"ONNX model file not found at: {self.model_path}")
-            return
-            
-        print(f"Loading ONNX Model from {self.model_path}...")
-        try:
-            providers = ['CPUExecutionProvider']
-            self.session = ort.InferenceSession(self.model_path, providers=providers)
-            
-            self.input_name = self.session.get_inputs()[0].name
-            self.input_shape = self.session.get_inputs()[0].shape
-            self.output_names = [out.name for out in self.session.get_outputs()]
-            
-            meta = self.session.get_modelmeta().custom_metadata_map
-            if 'names' in meta:
-                try:
-                    import ast
-                    self.class_names = ast.literal_eval(meta['names'])
-                    self.class_names = {int(k): v for k, v in self.class_names.items()}
-                except Exception:
-                    pass
-            print(f"ONNX Model loaded successfully.")
-        except Exception as e:
-            print(f"Failed to load ONNX session: {e}")
+from app.config import FRAMES_DIR
+from app.fcw.config_loader import (
+    depth_interval,
+    input_max_size,
+    load_config,
+    target_fps,
+)
+from app.fcw.frame_sampler import FrameSampler
+from app.fcw.monitor import PerformanceMonitor
+from app.fcw.pipeline import CollisionWarningSystem
+from app.fcw.risk import DANGER, WARNING
 
-    def preprocess(self, frame):
-        """Preprocesses the image for YOLOv8 model inference with letterbox padding."""
-        h, w = frame.shape[:2]
-        net_h, net_w = 640, 640
-        
-        r = min(net_w / w, net_h / h)
-        new_unpad = int(round(w * r)), int(round(h * r))
-        dw, dh = net_w - new_unpad[0], net_h - new_unpad[1]
-        
-        dw /= 2
-        dh /= 2
-        
-        if (w, h) != new_unpad:
-            im = cv2.resize(frame, new_unpad, interpolation=cv2.INTER_LINEAR)
-        else:
-            im = frame.copy()
-            
-        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-        
-        im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
-        im = im.transpose((2, 0, 1))
-        im = np.expand_dims(im, axis=0)
-        im = im.astype(np.float32) / 255.0
-        
-        return im, r, (dw, dh)
 
-    def detect(self, frame):
-        """
-        Runs object detection on the input frame.
-        Returns:
-            final_boxes: [[x1, y1, x2, y2], ...]
-            final_confidences: [conf1, ...]
-            final_class_ids: [id1, ...]
-        """
-        if self.session is None:
-            self._load_model()
-            if self.session is None:
-                return [], [], []
-                
-        h, w = frame.shape[:2]
-        blob, ratio, (dw, dh) = self.preprocess(frame)
-        
-        try:
-            outputs = self.session.run(self.output_names, {self.input_name: blob})
-            output = outputs[0]  # Shape: [1, 4 + num_classes, 8400]
-            output = np.squeeze(output)
-            output = output.T
-            
-            boxes = []
-            confidences = []
-            class_ids = []
-            
-            for row in output:
-                scores = row[4:]
-                class_id = np.argmax(scores)
-                confidence = float(scores[class_id])
-                
-                if confidence >= self.conf_threshold:
-                    cx, cy, bw, bh = row[:4]
-                    
-                    x1 = cx - bw / 2
-                    y1 = cy - bh / 2
-                    x2 = cx + bw / 2
-                    y2 = cy + bh / 2
-                    
-                    x1 = int((x1 - dw) / ratio)
-                    y1 = int((y1 - dh) / ratio)
-                    x2 = int((x2 - dw) / ratio)
-                    y2 = int((y2 - dh) / ratio)
-                    
-                    x1 = max(0, min(x1, w - 1))
-                    y1 = max(0, min(y1, h - 1))
-                    x2 = max(0, min(x2, w - 1))
-                    y2 = max(0, min(y2, h - 1))
-                    
-                    box_w = x2 - x1
-                    box_h = y2 - y1
-                    
-                    if box_w > 0 and box_h > 0:
-                        boxes.append([x1, y1, box_w, box_h])
-                        confidences.append(confidence)
-                        class_ids.append(int(class_id))
-                        
-            if not boxes:
-                return [], [], []
-                
-            indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_threshold, self.nms_threshold)
-            
-            final_boxes = []
-            final_confidences = []
-            final_class_ids = []
-            
-            if len(indices) > 0:
-                flat_indices = np.array(indices).flatten()
-                for i in flat_indices:
-                    x, y, bw_val, bh_val = boxes[i]
-                    final_boxes.append([x, y, x + bw_val, y + bh_val])
-                    final_confidences.append(confidences[i])
-                    final_class_ids.append(class_ids[i])
-                    
-            return final_boxes, final_confidences, final_class_ids
-        except Exception as e:
-            print(f"Error during detection: {e}")
-            return [], [], []
+class FCWVideoProcessor:
+    """Runs the FCW pipeline over an uploaded video and saves warning frames."""
 
-    def analyze_detections(self, boxes, confidences, frame_area):
-        """Enriches raw boxes and confidences with severity and colors."""
-        detections = []
-        for box, conf in zip(boxes, confidences):
-            x1, y1, x2, y2 = box
-            box_area = (x2 - x1) * (y2 - y1)
-            ratio = box_area / frame_area if frame_area > 0 else 0
+    def __init__(self, config_path=None):
+        self._config_path = config_path
+        self._system = None
+        self._cfg = None
 
-            if ratio > 0.04:
-                severity, color = "High", (0, 0, 255)       # Red
-            elif ratio > 0.012:
-                severity, color = "Medium", (0, 165, 255)   # Orange
-            else:
-                severity, color = "Low", (0, 255, 0)        # Green
+    # ── Pipeline construction ────────────────────────────────────────
+    def _get_system(self):
+        """Build the pipeline on first use, reusing it for later uploads."""
+        if self._system is None:
+            # Same config.yaml as the CLI, so tuning one tunes both.
+            self._cfg = load_config(self._config_path)
+            # A browser has no audio device, and a failed alert should never
+            # take down an upload.
+            self._cfg.set("warning.audio_enabled", False)
+            self._system = CollisionWarningSystem(self._cfg)
+            self._system.source_label = "web"
+        return self._system
 
-            detections.append({
-                "box": box,
-                "confidence": round(float(conf), 4),
-                "severity": severity,
-                "color": color
-            })
-        return detections
+    @property
+    def config(self):
+        if self._cfg is None:
+            self._cfg = load_config(self._config_path)
+        return self._cfg
 
-    def draw_detections(self, frame, detections):
-        """Draws bounding boxes, labels, and confidence tags on the frame."""
-        out = frame.copy()
-        for det in detections:
-            x1, y1, x2, y2 = det["box"]
-            color = det["color"]
-            conf = det["confidence"]
-            severity = det["severity"]
-            conf_pct = int(conf * 100)
+    # ── Video analysis ───────────────────────────────────────────────
+    def process_video(self, video_path: str, video_id: int, progress_callback=None):
+        """Analyse a video file frame by frame.
 
-            # Draw outer rectangle
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
-
-            # Label banner
-            label = f"Pothole {conf_pct}% ({severity})"
-            (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            cv2.rectangle(out, (x1, max(0, y1 - th - 10)), (x1 + tw + 8, y1), color, -1)
-            cv2.putText(out, label, (x1 + 4, max(th + 2, y1 - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        return out
-
-    def process_video(self, video_path: str, video_id: int):
-        """
-        Processes an uploaded video file frame-by-frame:
-        - Detects potholes in each frame
-        - Saves detected frames as annotated images in app/static/frames/
-        - Returns full video telemetry & list of detected frame records.
+        Saves a JPEG for each frame that raised a WARNING or DANGER, then
+        returns the telemetry the routes persist to SQLite.
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            raise ValueError(f"Cannot open video file: {video_path}")
+            raise ValueError(f"Không thể mở video: {video_path}")
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
-        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 25.0
-        duration_sec = total_frames / fps if fps > 0 else 0.0
+        src_fps = cap.get(cv2.CAP_PROP_FPS)
+        if not src_fps or not (1.0 < src_fps < 240.0):
+            src_fps = 25.0
+        total_source = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration_sec = (total_source / src_fps) if total_source > 0 else 0.0
 
-        encode_params = [cv2.IMWRITE_JPEG_QUALITY, 90]
-        detected_frames_data = []
-        total_potholes_count = 0
-        frame_idx = 0
+        cfg = self.config
+        system = self._get_system()
+        system.source_label = f"video #{video_id}"
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame_idx += 1
+        max_w, max_h = input_max_size(cfg)
+        sampler = FrameSampler(src_fps, target_fps(cfg), max_w, max_h)
+        interval = depth_interval(cfg)
 
-            h, w = frame.shape[:2]
-            boxes, confidences, class_ids = self.detect(frame)
+        monitor = PerformanceMonitor()
+        monitor.source_duration = duration_sec
+        monitor.start()
 
-            if boxes:
-                detections = self.analyze_detections(boxes, confidences, w * h)
-                total_potholes_count += len(detections)
+        print(f"[FCW] Video #{video_id}: {total_source} frames @ {src_fps:.2f} FPS "
+              f"({duration_sec:.1f}s) -> processing {sampler.effective_fps:.1f} FPS "
+              f"(step {sampler.frame_step}), depth every {interval}")
 
-                # Draw bounding boxes on frame
-                annotated = self.draw_detections(frame, detections)
+        warning_frames = []
+        danger_count = 0
+        min_ttc = None
+        min_distance = None
+        processed = 0
 
-                # Save image to frames directory
-                filename = f"video_{video_id}_frame_{frame_idx:06d}.jpg"
-                save_path = os.path.join(FRAMES_DIR, filename)
-                cv2.imwrite(save_path, annotated, encode_params)
+        try:
+            while True:
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
 
-                # Relative public URL
-                public_image_url = f"/static/frames/{filename}"
+                source_index = sampler.source_frames_seen
+                if not sampler.should_process():
+                    continue
 
-                # Calculate stats for this frame
-                conf_list = [d["confidence"] for d in detections]
-                max_conf = max(conf_list)
-                
-                # Determine overall severity for frame
-                if any(d["severity"] == "High" for d in detections):
-                    frame_sev = "High"
-                elif any(d["severity"] == "Medium" for d in detections):
-                    frame_sev = "Medium"
-                else:
-                    frame_sev = "Low"
+                monitor.mark_source_frame()
 
-                timestamp_sec = frame_idx / fps if fps > 0 else 0.0
+                # Timestamp from the ORIGINAL index. This is what keeps TTC right.
+                timestamp = sampler.timestamp_for(source_index)
 
-                detected_frames_data.append({
-                    "video_id": video_id,
-                    "frame_number": frame_idx,
-                    "timestamp_sec": round(timestamp_sec, 2),
-                    "image_path": public_image_url,
-                    "pothole_count": len(detections),
-                    "max_confidence": max_conf,
-                    "severity": frame_sev,
-                    "confidences_json": json.dumps(conf_list),
-                    "detections_json": json.dumps([
-                        {
-                            "box": d["box"],
-                            "confidence": d["confidence"],
-                            "severity": d["severity"]
-                        }
-                        for d in detections
-                    ])
-                })
+                small = sampler.resize(frame)
+                annotated, result = system.process_frame(
+                    small, timestamp, source_frame=source_index)
+                processed += 1
 
-        cap.release()
+                monitor.mark_video_time(timestamp)
+                monitor.add_yolo(result.get("yolo_ms", 0.0))
+                if result.get("depth_computed") and result.get("depth_ms"):
+                    monitor.add_depth(result["depth_ms"])
+                monitor.mark_frame()
+
+                level = result["level"]
+                primary = result["primary"]
+
+                if primary is not None:
+                    ttc = primary.get("ttc_s")
+                    if ttc is not None and ttc > 0:
+                        min_ttc = ttc if min_ttc is None else min(min_ttc, ttc)
+                    dist = primary.get("distance_m")
+                    if dist is not None and dist > 0:
+                        min_distance = dist if min_distance is None else min(min_distance, dist)
+
+                # Persist only frames that actually warned. Saving every frame of a
+                # 90 s video would produce thousands of images for no benefit.
+                if level in (DANGER, WARNING) and primary is not None:
+                    if level == DANGER:
+                        danger_count += 1
+                    image_path = self._save_frame(annotated, video_id, source_index)
+                    if image_path:
+                        warning_frames.append({
+                            "frame_number": source_index,
+                            "timestamp_sec": round(timestamp, 3),
+                            "image_path": image_path,
+                            "severity": level,
+                            "track_id": primary["track_id"],
+                            "class_name": primary["class"],
+                            "distance_m": primary["distance_m"],
+                            "closing_speed_mps": primary["closing_speed_mps"],
+                            "ttc_sec": primary["ttc_s"],
+                            "confidence": primary["confidence"],
+                            "ego_speed_mps": round(result["ego_speed_mps"], 2),
+                            "detections_json": json.dumps(result["objects"]),
+                        })
+
+                if progress_callback:
+                    progress_callback(processed, total_source)
+        finally:
+            cap.release()
+
+        sampler_stats = sampler.stats()
+        perf = monitor.summary(source_fps=sampler_stats["input_fps"],
+                               target_fps=sampler_stats["target_fps"],
+                               frame_step=sampler_stats["frame_step"],
+                               input_size=(max_w, max_h))
+
+        print(f"[FCW] Video #{video_id} done: {processed}/{total_source} frames "
+              f"in {perf['processing_time_sec']}s "
+              f"(speed_ratio {perf['speed_ratio']}), "
+              f"{len(warning_frames)} warning frames")
 
         return {
-            "total_frames": total_frames,
-            "fps": fps,
-            "duration_sec": duration_sec,
-            "total_potholes_count": total_potholes_count,
-            "detected_frames": detected_frames_data
+            "total_frames": processed,
+            "source_frames": total_source,
+            "frames_skipped": sampler_stats["skipped_frames"],
+            "fps": round(src_fps, 2),
+            "duration_sec": round(duration_sec, 2),
+            "warning_frames": warning_frames,
+            "warning_frames_count": len(warning_frames),
+            "danger_frames_count": danger_count,
+            "min_ttc_sec": min_ttc,
+            "min_distance_m": min_distance,
+            "performance": perf,
         }
 
-# Global detector instance
-detector = PotholeDetector()
+    def _save_frame(self, frame, video_id, source_frame):
+        """Write one annotated frame to the static frames directory."""
+        try:
+            filename = f"fcw_{video_id}_frame_{source_frame:06d}.jpg"
+            filepath = os.path.join(FRAMES_DIR, filename)
+            cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            return f"/static/frames/{filename}"
+        except Exception as exc:
+            print(f"[FCW] Could not save frame {source_frame}: {exc}")
+            return None
+
+    def reset(self):
+        """Drop all temporal state so the next upload starts clean.
+
+        Essential: without this, one video's tracking histories and ego-motion
+        history would seed the next video's first frames with wrong range and
+        speed.
+        """
+        if self._system is not None:
+            self._system.reset()
+
+
+# Module-level singleton, matching the pattern used across the codebase.
+detector = FCWVideoProcessor()

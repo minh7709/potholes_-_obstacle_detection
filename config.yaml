@@ -1,0 +1,231 @@
+# ═════════════════════════════════════════════════════════════════════
+# RoadGuard — FCW configuration
+#
+# Every value can be overridden on the command line; this file is the
+# default profile. Environment variables (FCW_*) still work and take
+# precedence over this file, so container/CI setups can tweak without
+# editing files.
+#
+# Tuned for: Intel i5-8250U (4c/8t), 8 GB RAM, NO NVIDIA GPU.
+# Measured baseline on that CPU: YOLO track ~55 ms/frame,
+# depth @224 ~285 ms, depth @518 ~2580 ms. Depth dominates, hence
+# depth_interval and depth resolution matter far more than YOLO settings.
+# ═════════════════════════════════════════════════════════════════════
+
+input:
+  # Frames larger than this are downscaled before any inference. Feeding 4K
+  # straight into YOLO/depth wastes time on pixels we immediately discard.
+  max_width: 1280
+  max_height: 720
+  # Set both to 640/480 on a weak CPU (roughly halves YOLO time and depth
+  # cost, at the price of small-object detection accuracy).
+  # max_width: 640
+  # max_height: 480
+
+processing:
+  # Frames per second actually pushed through the pipeline. A 30/60 FPS
+  # phone video is decimated down to this. Timestamps still come from the
+  # ORIGINAL frame index, so TTC math is unaffected.
+  # null = no decimation (process every frame).
+  target_fps: 10
+  # CPU thread count for torch. 0 = leave torch's default alone.
+  torch_threads: 8
+
+depth:
+  # Run Depth Anything V2 only every N processed frames. The dominant
+  # optimisation: at interval 5 the depth cost drops to 1/5.
+  interval: 5
+  # Network input height. Aspect ratio is preserved. 224 is ~9x faster
+  # than 518 and is the recommended CPU setting.
+  # 224 = fast (recommended) | 350 = balanced | 518 = accurate, slow
+  processing_height: 224
+  model: depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf
+  # Fill frames between real depth measurements.
+  # "linear" = interpolate between the last two measurements
+  # "hold"    = reuse the last valid measurement (more conservative)
+  interpolation: linear
+  # If linear interpolation would imply a distance change faster than this
+  # (m/s), fall back to holding. Depth errors of 10-25% can otherwise
+  # produce wildly over-steep ramps between two samples.
+  max_interpolated_speed_mps: 12.0
+  # Half-size of the centre crop used for the median, as a fraction of the
+  # box width/height. Keeps the estimate on the vehicle body rather than
+  # on sky/road bleeding in around it.
+  center_crop: 0.5
+  min_valid_samples: 16
+  outlier_tolerance: 0.25
+  valid_min_m: 1.0
+  valid_max_m: 120.0
+
+distance:
+  # "ema" (default) or "moving_average"
+  smoothing: ema
+  # EMA weight on the newest sample. Lower = smoother but laggier.
+  alpha: 0.3
+  history_length: 20
+
+tracking:
+  tracker: bytetrack.yaml      # bytetrack.yaml | botsort.yaml
+  # Frames a track must exist before it may raise any warning. Applies to
+  # close-range warnings too, so a single bad depth reading cannot sound an
+  # alarm just because something measured 2 m away once.
+  # How many frames a track survives without a detection before being
+  # dropped. This is what keeps one ID across brief occlusions.
+  max_age: 30
+  min_hits: 3
+  buffer: 30
+
+speed:
+  # Minimum samples before a closing speed is trusted at all.
+  min_samples: 4
+  # Minimum time span covered by the history window. Guards against
+  # dividing by a tiny dt and producing absurd speeds.
+  min_window_sec: 0.6
+  max_closing_speed_mps: 25.0
+  # Extra EMA on the closing speed itself, to stop TTC flickering.
+  ema_alpha: 0.5
+
+ego_motion:
+  enabled: true
+  # Optical flow costs ~14 ms/frame, the third largest item. Ego speed is
+  # heavily smoothed and changes slowly, so computing it on the depth cadence
+  # (or every Nth frame) is nearly free in accuracy and saves ~8% of the budget.
+  # Flow between two frames N apart is still valid: dt grows and the fit improves.
+  interval: 1
+  # Background depth (m) considered "static scenery" for ego-speed.
+  background_depth_m: 15.0
+  # Minimum |row - horizon| as a fraction of height for a usable flow point.
+  min_row_offset_ratio: 0.12
+  smoothing: 0.6
+  max_accel_mps: 8.0
+  max_speed_mps: 33.0
+  # Multiplier applied to ego speed to get the depth-rate bias.
+  bias_gain: 1.0
+
+collision:
+  # TTC (s) at or below which WARNING is raised.
+  warning_ttc: 4.0
+  # TTC (s) at or below which DANGER is raised.
+  danger_ttc: 2.0
+
+  # Range thresholds, independent of closing speed.
+  #
+  # TTC alone is not enough: when the gap stops shrinking, closing_speed -> 0 and
+  # TTC becomes infinite, so the system would report NORMAL. A vehicle stopped
+  # 3 m in front of you is the most dangerous state there is, and pure TTC logic
+  # calls it safe. These thresholds warn on range alone; the level used is the
+  # worse of the TTC level and the range level.
+  #
+  # 3.5 m is roughly "cannot stop in time" for a car following a motorcycle.
+  danger_distance_m: 3.5
+  # 8 m gives time to react while still allowing safe following distance.
+  warning_distance_m: 8.0
+
+  # Absolute last-resort range, independent of level.
+  min_distance_m: 0.5
+
+  # Consecutive frames at a level required before alarming.
+  confirm_frames: 3
+
+roi:
+  # Wide region: drawn for context, and gates whether an object is tracked as a
+  # road object at all.
+  x_min: 0.20
+  x_max: 0.80
+  y_min: 0.30
+  y_max: 0.97
+
+  # WARNING CORRIDOR — narrower. This is the only region where an object may
+  # escalate to WARNING/DANGER and sound the alarm.
+  #
+  # Rationale: a windshield camera sits roughly where the driver's eyes are, so
+  # the frame centre is a reasonable proxy for where the driver is actually
+  # looking. An obstacle at the image edge is in another lane, on the shoulder,
+  # or oncoming traffic: alarming on it trains the driver to ignore the alarm.
+  #
+  # A ±17% band is roughly the middle third of the road ahead. Widen it if the
+  # camera is offset from the driver's eyeline or mounted off-centre.
+  warn_x_min: 0.33
+  warn_x_max: 0.67
+  warn_y_min: 0.32
+  # Kept wide at the bottom on purpose: a target that is very close occupies the
+  # lower frame, and that is exactly the case worth warning about.
+  warn_y_max: 0.97
+
+  # How close to frame centre an object must be (1.0 = anywhere). Only affects
+  # the ranking score, not the hard corridor test above.
+  center_tolerance: 0.35
+
+classes:
+  # Detector weights. assets/best.pt is the 15-class road-obstacle model
+  # trained on local footage (motorbike, pothole, reflective_cone,
+  # warning_column, spherical_roadblock, ashcan, stop_sign, dog, tricycle,
+  # fire_hydrant, car, bus, truck, bicycle, person).
+  #
+  # It calls a motorcycle "motorbike"; name matching is normalised, so writing
+  # "motorcycle" here resolves to id 6 correctly. See app/fcw/detector.py.
+  yolo_model: assets/best.pt
+
+  # Detected and drawn. Names are matched with alias resolution, so either
+  # "motorcycle" or "motorbike" works, and "stop sign" matches "stop_sign".
+  #
+  # All 15 classes of assets/best.pt are enabled. Restricting this list is also
+  # valid, but a class that is not listed here is never detected at all, so the
+  # detector will report it as unmatched at startup.
+  targets: [motorbike, car, bus, truck, bicycle, person,
+            pothole, reflective_cone, warning_column, spherical_roadblock,
+            ashcan, stop_sign, tricycle, fire_hydrant, dog]
+
+  # Only these can trigger a collision warning (TTC + audio). Keep it short:
+  # a cone or a pothole may sit inside the ROI, but braking to avoid them is not
+  # what a forward collision warning is for.
+  primary: [motorbike]
+  conf_threshold: 0.45
+  iou_threshold: 0.5
+  # Ignore boxes smaller than this fraction of the frame; they are noise.
+  min_area_ratio: 0.0008
+
+warning:
+  audio_enabled: true
+  warning_cooldown_sec: 1.5
+  danger_cooldown_sec: 1.0
+  volume: 0.8
+
+calibration:
+  # Depth correction: scale = true_distance / model_distance at one
+  # reference point. 1.0 means uncalibrated.
+  depth_scale: 1.0
+  calib_true_m: 10.0
+  calib_model_m: 10.0
+
+performance:
+  # Below this processing FPS the adaptive controller starts reducing load.
+  adaptive_enabled: true
+  adaptive_min_fps: 5.0
+  # Only degrade after this many consecutive slow samples, so a one-off
+  # slow frame (first model call, GC pause) does not trigger it.
+  adaptive_window: 25
+  adaptive_cooldown_sec: 8.0
+  # Ordered steps: step N uses target_fps[N] and depth_interval[N].
+  # TTC thresholds are deliberately NOT adaptive.
+  adaptive_steps:
+    - {target_fps: 10, depth_interval: 5}
+    - {target_fps: 8,  depth_interval: 6}
+    - {target_fps: 6,  depth_interval: 8}
+    - {target_fps: 4,  depth_interval: 10}
+
+visual:
+  # Drawing costs very little (<1 ms), but skip it entirely for pure
+  # telemetry runs where neither a window nor a video is produced.
+  render: true
+
+output:
+  save_annotated_video: true
+  save_csv: true
+  save_summary: true
+  directory: output
+  video_name: annotated_video.mp4
+  csv_name: events.csv
+  summary_name: summary.json
+  # Write one CSV row per processed frame per tracked object.
+  csv_every_frame: true

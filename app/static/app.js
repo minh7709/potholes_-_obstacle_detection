@@ -2,6 +2,22 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize Lucide Icons
     lucide.createIcons();
 
+    // ── Safe DOM helpers ─────────────────────────────────────────────────
+    // getElementById returns null when an element is absent, and assigning to
+    // .textContent on null throws, which blanks the whole page. That is not a
+    // cosmetic problem: it silently killed every handler on the page whenever
+    // the HTML and this script drifted out of sync (a renamed KPI id is enough).
+    // setText degrades to a no-op so a partial mismatch cannot take the app down.
+    const setText = (element, value) => {
+        if (element) element.textContent = value;
+    };
+    const setHtml = (element, value) => {
+        if (element) element.innerHTML = value;
+    };
+    const setStyle = (element, prop, value) => {
+        if (element && element.style) element.style[prop] = value;
+    };
+
     // ── Global App State ─────────────────────────────────────────────────
     let currentSelectedFile = null;
     let currentVideoData = null;
@@ -36,10 +52,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const resultVideoPlayer = document.getElementById("result-video-player");
     const resVideoName = document.getElementById("res-video-name");
     const resVideoMeta = document.getElementById("res-video-meta");
-    const kpiTotalPotholes = document.getElementById("kpi-total-potholes");
-    const kpiDetectedFrames = document.getElementById("kpi-detected-frames");
-    const kpiTotalFramesRatio = document.getElementById("kpi-total-frames-ratio");
-    const kpiMaxConf = document.getElementById("kpi-max-conf");
+    const kpiTotalWarnings = document.getElementById("kpi-total-warnings");
+    const kpiMinTtc = document.getElementById("kpi-min-ttc");
+    const kpiMinDistance = document.getElementById("kpi-min-distance");
     const kpiSevHigh = document.getElementById("kpi-sev-high");
     const kpiSevMedium = document.getElementById("kpi-sev-medium");
     const kpiSevLow = document.getElementById("kpi-sev-low");
@@ -57,8 +72,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Stats Components
     const statTotalVideos = document.getElementById("stat-total-videos");
-    const statTotalPotholes = document.getElementById("stat-total-potholes");
-    const statTotalFrames = document.getElementById("stat-total-frames");
+    const statTotalWarnings = document.getElementById("stat-total-potholes");
+    const statAvgTtc = document.getElementById("stat-total-frames");
     const overallSeverityRow = document.getElementById("overall-severity-row");
 
     // Modals
@@ -68,8 +83,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const modalFrameTitle = document.getElementById("modal-frame-title");
     const modalFrameBadge = document.getElementById("modal-frame-badge");
     const modalTimestamp = document.getElementById("modal-timestamp");
-    const modalPotholeCount = document.getElementById("modal-pothole-count");
-    const modalMaxConf = document.getElementById("modal-max-conf");
+    const modalObject = document.getElementById("modal-pothole-count");
+    const modalDistance = document.getElementById("modal-max-conf");
+    const modalClosingSpeed = document.getElementById("modal-closing-speed");
+    const modalTtc = document.getElementById("modal-ttc");
+    const modalEgoSpeed = document.getElementById("modal-ego-speed");
+    const modalReason = document.getElementById("modal-reason");
     const modalConfList = document.getElementById("modal-conf-list");
 
     const modalReset = document.getElementById("modal-reset");
@@ -81,7 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ── Clock ────────────────────────────────────────────────────────────
     function updateLiveClock() {
         const now = new Date();
-        liveClock.textContent = now.toLocaleTimeString("vi-VN");
+        setText(liveClock, now.toLocaleTimeString("vi-VN"));
     }
     setInterval(updateLiveClock, 1000);
     updateLiveClock();
@@ -93,20 +112,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (tabId === "upload") {
             navUpload.classList.add("active");
-            sectionUpload.style.display = "block";
-            headerTitle.textContent = "Nhận diện Ổ gà từ Video";
-            headerSubtitle.textContent = "Tải video lên để mô hình AI tự động quét từng khung hình và trích xuất các vị trí ổ gà";
+            setStyle(sectionUpload, "display", "block");
+            setText(headerTitle, "Cảnh báo Va chạm từ Video");
+            setText(headerSubtitle, "Tải video lên để AI nhận diện xe phía trước, ước lượng khoảng cách, tốc độ đóng và thời gian va chạm (TTC)");
         } else if (tabId === "history") {
             navHistory.classList.add("active");
-            sectionHistory.style.display = "block";
-            headerTitle.textContent = "Lịch sử Phân tích Video";
-            headerSubtitle.textContent = "Xem lại toàn bộ video đã xử lý và các khung hình ổ gà đã lưu trữ";
+            setStyle(sectionHistory, "display", "block");
+            setText(headerTitle, "Lịch sử Phân tích Video");
+            setText(headerSubtitle, "Xem lại toàn bộ video đã xử lý và các khung hình cảnh báo đã lưu trữ");
             loadHistoryTable();
         } else if (tabId === "stats") {
             navStats.classList.add("active");
-            sectionStats.style.display = "block";
-            headerTitle.textContent = "Thống kê Hệ thống AI";
-            headerSubtitle.textContent = "Tổng hợp dữ liệu nhận diện và phân bố mức độ nghiêm trọng";
+            setStyle(sectionStats, "display", "block");
+            setText(headerTitle, "Thống kê Hệ thống AI");
+            setText(headerSubtitle, "Tổng hợp dữ liệu cảnh báo va chạm và phân bố mức nguy hiểm");
             loadOverallStats();
         }
         lucide.createIcons();
@@ -120,11 +139,11 @@ document.addEventListener("DOMContentLoaded", () => {
     function handleSelectedFile(file) {
         if (!file) return;
         currentSelectedFile = file;
-        selectedFileName.textContent = file.name;
-        selectedFileSize.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+        setText(selectedFileName, file.name);
+        setText(selectedFileSize, `${(file.size / (1024 * 1024)).toFixed(2)} MB`);
 
-        dropZone.style.display = "none";
-        fileInfoPanel.style.display = "flex";
+        setStyle(dropZone, "display", "none");
+        setStyle(fileInfoPanel, "display", "flex");
         lucide.createIcons();
     }
 
@@ -142,19 +161,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
     dropZone.addEventListener("dragover", (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = "var(--primary)";
-        dropZone.style.background = "rgba(99, 102, 241, 0.08)";
+        setStyle(dropZone, "borderColor", "var(--primary)");
+        setStyle(dropZone, "background", "rgba(99, 102, 241, 0.08)");
     });
 
     dropZone.addEventListener("dragleave", () => {
-        dropZone.style.borderColor = "";
-        dropZone.style.background = "";
+        setStyle(dropZone, "borderColor", "");
+        setStyle(dropZone, "background", "");
     });
 
     dropZone.addEventListener("drop", (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = "";
-        dropZone.style.background = "";
+        setStyle(dropZone, "borderColor", "");
+        setStyle(dropZone, "background", "");
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             handleSelectedFile(e.dataTransfer.files[0]);
         }
@@ -163,8 +182,8 @@ document.addEventListener("DOMContentLoaded", () => {
     btnChangeFile.addEventListener("click", () => {
         currentSelectedFile = null;
         videoInput.value = "";
-        fileInfoPanel.style.display = "none";
-        dropZone.style.display = "flex";
+        setStyle(fileInfoPanel, "display", "none");
+        setStyle(dropZone, "display", "flex");
         lucide.createIcons();
     });
 
@@ -172,9 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
     btnStartProcess.addEventListener("click", async () => {
         if (!currentSelectedFile) return;
 
-        fileInfoPanel.style.display = "none";
-        processingPanel.style.display = "flex";
-        resultsContainer.style.display = "none";
+        setStyle(fileInfoPanel, "display", "none");
+        setStyle(processingPanel, "display", "flex");
+        setStyle(resultsContainer, "display", "none");
 
         const formData = new FormData();
         formData.append("file", currentSelectedFile);
@@ -197,15 +216,15 @@ document.addEventListener("DOMContentLoaded", () => {
             renderAnalysisResults(currentVideoData);
 
             // Reset upload form state
-            processingPanel.style.display = "none";
-            dropZone.style.display = "flex";
+            setStyle(processingPanel, "display", "none");
+            setStyle(dropZone, "display", "flex");
             videoInput.value = "";
             currentSelectedFile = null;
 
         } catch (error) {
             alert(`Lỗi: ${error.message}`);
-            processingPanel.style.display = "none";
-            fileInfoPanel.style.display = "flex";
+            setStyle(processingPanel, "display", "none");
+            setStyle(fileInfoPanel, "display", "flex");
         }
     });
 
@@ -216,80 +235,68 @@ document.addEventListener("DOMContentLoaded", () => {
         // 1. Video Player
         resultVideoPlayer.src = videoData.video_url;
         resultVideoPlayer.load();
-        resVideoName.textContent = videoData.filename;
-        resVideoMeta.textContent = `${videoData.duration_sec}s · ${videoData.fps} FPS · ${videoData.total_frames} Frames`;
+        setText(resVideoName, videoData.filename);
+        setText(resVideoMeta, `${videoData.duration_sec}s · ${videoData.fps} FPS · ${videoData.total_frames} Frames`);
 
-        // 2. KPI Summary
-        kpiTotalPotholes.textContent = videoData.potholes_count;
-        kpiDetectedFrames.textContent = videoData.detected_frames_count;
-        kpiTotalFramesRatio.textContent = `/ ${videoData.total_frames} frames`;
+        // 2. KPI Summary — distance and TTC are ESTIMATES from monocular depth.
+        setText(kpiTotalWarnings, videoData.warning_frames_count || 0);
+        setText(kpiMinTtc, videoData.min_ttc_sec != null ? `${videoData.min_ttc_sec}s` : "—");
+        setText(kpiMinDistance, videoData.min_distance_m != null ? `${videoData.min_distance_m} m` : "—");
 
-        // Calculate severity and max confidence
+        // Split stored frames by warning level.
         const frames = videoData.frames || [];
-        let maxOverallConf = 0;
-        let highCount = 0;
-        let mediumCount = 0;
-        let lowCount = 0;
-
+        let dangerCount = 0;
+        let warningCount = 0;
         frames.forEach(f => {
-            if (f.max_confidence > maxOverallConf) maxOverallConf = f.max_confidence;
-            if (f.severity === "High") highCount++;
-            else if (f.severity === "Medium") mediumCount++;
-            else if (f.severity === "Low") lowCount++;
+            if (f.severity === "DANGER") dangerCount++;
+            else warningCount++;
         });
 
-        kpiMaxConf.textContent = `${Math.round(maxOverallConf * 100)}%`;
-        kpiSevHigh.textContent = highCount;
-        kpiSevMedium.textContent = mediumCount;
-        kpiSevLow.textContent = lowCount;
+        setText(kpiSevHigh, dangerCount);
+        setText(kpiSevMedium, warningCount);
+        setText(kpiSevLow, 0);  // Normal frames are not persisted to keep the DB small
 
-        const totalDetected = frames.length || 1;
-        barSevHigh.style.width = `${(highCount / totalDetected) * 100}%`;
-        barSevMedium.style.width = `${(mediumCount / totalDetected) * 100}%`;
-        barSevLow.style.width = `${(lowCount / totalDetected) * 100}%`;
+        const totalStored = frames.length || 1;
+        setStyle(barSevHigh, "width", `${(dangerCount / totalStored) * 100}%`);
+        setStyle(barSevMedium, "width", `${(warningCount / totalStored) * 100}%`);
+        setStyle(barSevLow, "width", "0%");
 
-        // 3. Render Frames Gallery
-        galleryTotalBadge.textContent = `${frames.length} ảnh`;
+        // 3. Render Warning Frames Gallery
+        setText(galleryTotalBadge, `${frames.length} ảnh`);
         renderFramesGrid(frames);
 
         // Show Results Section
-        resultsContainer.style.display = "block";
+        setStyle(resultsContainer, "display", "block");
         resultsContainer.scrollIntoView({ behavior: "smooth" });
         lucide.createIcons();
     }
 
     // ── Render Frames Grid ───────────────────────────────────────────────
     function renderFramesGrid(frames) {
-        framesGrid.innerHTML = "";
+        setHtml(framesGrid, "");
 
-        const filtered = currentActiveFilter === "all" 
-            ? frames 
-            : frames.filter(f => f.severity.toLowerCase() === currentActiveFilter.toLowerCase());
+        const filtered = currentActiveFilter === "all"
+            ? frames
+            : frames.filter(f => f.severity === currentActiveFilter);
 
         if (filtered.length === 0) {
-            emptyGallery.style.display = "flex";
+            setStyle(emptyGallery, "display", "flex");
             return;
         } else {
-            emptyGallery.style.display = "none";
+            setStyle(emptyGallery, "display", "none");
         }
 
         filtered.forEach(frame => {
             const card = document.createElement("div");
             card.className = "frame-card";
 
-            const badgeClass = frame.severity === "High" ? "badge-danger" 
-                             : frame.severity === "Medium" ? "badge-warning" 
-                             : "badge-success";
+            const badgeClass = frame.severity === "DANGER" ? "badge-danger" : "badge-warning";
 
-            // Render confidence chips for each pothole detected in this frame
-            const confs = frame.confidences || [];
-            const confChipsHtml = confs.map((c, idx) => {
-                const pct = Math.round(c * 100);
-                const chipClass = pct >= 80 ? "chip-high" : pct >= 50 ? "chip-medium" : "chip-low";
-                return `<span class="conf-chip ${chipClass}">#${idx + 1}: ${pct}%</span>`;
-            }).join("");
+            const dist = frame.distance_m != null ? `${frame.distance_m} m` : "—";
+            const ttc = frame.ttc_sec != null ? `${frame.ttc_sec}s` : "—";
+            const speed = frame.closing_speed_mps != null ? `${frame.closing_speed_mps} m/s` : "—";
 
-            card.innerHTML = `
+            setHtml(card, `
                 <div class="frame-thumbnail">
                     <img src="${frame.image_path}" alt="Frame #${frame.frame_number}" loading="lazy">
                     <div class="frame-hover-overlay">
@@ -304,13 +311,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                     <div class="frame-row-top">
                         <span class="frame-time">⏱️ ${frame.timestamp_sec}s</span>
-                        <span class="text-emerald" style="font-weight: 600; font-size: 0.85rem;">Max: ${Math.round(frame.max_confidence * 100)}%</span>
+                        <span class="text-rose" style="font-weight: 600; font-size: 0.85rem;">TTC: ${ttc}</span>
                     </div>
                     <div class="conf-badges-wrap">
-                        ${confChipsHtml}
+                        <span class="conf-chip chip-high">${frame.class_name} #${frame.track_id ?? "—"}</span>
+                        <span class="conf-chip chip-medium">${dist}</span>
+                        <span class="conf-chip chip-low">${speed}</span>
                     </div>
                 </div>
-            `;
+            `);
 
             card.addEventListener("click", () => openFrameModal(frame));
             framesGrid.appendChild(card);
@@ -334,25 +343,45 @@ document.addEventListener("DOMContentLoaded", () => {
     // ── Frame Detail Modal ───────────────────────────────────────────────
     function openFrameModal(frame) {
         modalImg.src = frame.image_path;
-        modalFrameTitle.textContent = `Khung hình #${frame.frame_number}`;
-        modalTimestamp.textContent = `${frame.timestamp_sec} giây`;
-        modalPotholeCount.textContent = `${frame.pothole_count} ổ gà`;
-        modalMaxConf.textContent = `${Math.round(frame.max_confidence * 100)}%`;
+        setText(modalFrameTitle, `Khung hình #${frame.frame_number}`);
+        setText(modalTimestamp, `${frame.timestamp_sec} giây`);
+        setText(modalObject, `${frame.class_name} #${frame.track_id ?? "—"}`);
+        setText(modalDistance, frame.distance_m != null ? `${frame.distance_m} m` : "—");
+        setText(modalClosingSpeed, frame.closing_speed_mps != null ? `${frame.closing_speed_mps} m/s` : "—");
+        setText(modalTtc, frame.ttc_sec != null ? `${frame.ttc_sec} s` : "—");
+        setText(modalEgoSpeed, `${frame.ego_speed_mps} m/s`);
 
-        modalFrameBadge.className = `badge ${frame.severity === "High" ? "badge-danger" : frame.severity === "Medium" ? "badge-warning" : "badge-success"}`;
-        modalFrameBadge.textContent = frame.severity;
+        // Range and TTC warn independently, so say which one fired. A DANGER with
+        // TTC = infinity otherwise looks like a bug rather than the close-range rule.
+        const primaryDet = (frame.detections || []).find(o => o.track_id === frame.track_id)
+                        || (frame.detections || [])[0];
+        let reason = "—";
+        if (primaryDet && primaryDet.proximity_trigger) {
+            reason = "QUÁ GẦN (TTC không áp dụng)";
+        } else if (frame.severity === "DANGER") {
+            reason = "TTC ≤ ngưỡng nguy hiểm";
+        } else if (frame.severity === "WARNING") {
+            reason = "TTC ≤ ngưỡng cảnh báo";
+        }
+        setText(modalReason, reason);
+        if (modalReason) {
+            modalReason.className = (primaryDet && primaryDet.proximity_trigger)
+                ? "text-rose" : "text-amber";
+        }
 
-        // Render conf list
-        const confs = frame.confidences || [];
-        modalConfList.innerHTML = confs.map((c, idx) => {
-            const pct = Math.round(c * 100);
-            return `
-                <div class="modal-conf-item">
-                    <span>Ổ gà #${idx + 1}</span>
-                    <strong class="text-emerald">${pct}%</strong>
-                </div>
-            `;
-        }).join("");
+        modalFrameBadge.className = `badge ${frame.severity === "DANGER" ? "badge-danger" : "badge-warning"}`;
+        setText(modalFrameBadge, frame.severity);
+
+        // All tracked objects in this frame with their telemetry.
+        const objects = frame.detections || [];
+        setHtml(modalConfList, objects.length ? objects.map(o => `
+            <div class="modal-conf-item">
+                <span>${o.class} #${o.track_id ?? "—"}</span>
+                <strong class="${o.level === "DANGER" ? "text-rose" : o.level === "WARNING" ? "text-amber" : "text-emerald"}">
+                    ${o.distance_m != null ? o.distance_m + "m" : "—"} · TTC ${o.ttc_s != null ? o.ttc_s + "s" : "∞"}
+                </strong>
+            </div>
+        `).join("") : '<p class="text-muted">Không có đối tượng nào được theo dõi.</p>');
 
         modalPreview.classList.add("active");
         lucide.createIcons();
@@ -365,26 +394,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ── History Table Loader ─────────────────────────────────────────────
     async function loadHistoryTable() {
-        historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4">Đang tải danh sách video...</td></tr>`;
+        setHtml(historyTbody, `<tr><td colspan="9" class="text-center py-4">Đang tải danh sách video...</td></tr>`);
         try {
             const res = await fetch("/api/videos");
             const videos = await res.json();
 
             if (!videos || videos.length === 0) {
-                historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">Chưa có video nào được xử lý. Hãy tải lên video mới!</td></tr>`;
+                setHtml(historyTbody, `<tr><td colspan="9" class="text-center py-4 text-muted">Chưa có video nào được xử lý. Hãy tải lên video mới!</td></tr>`);
                 return;
             }
 
-            historyTbody.innerHTML = videos.map(v => {
+            setHtml(historyTbody, videos.map(v => {
                 const dt = v.uploaded_at ? new Date(v.uploaded_at).toLocaleString("vi-VN") : "N/A";
+                const ttc = v.min_ttc_sec != null ? `${v.min_ttc_sec}s` : "—";
+                const dangerBadge = v.danger_frames_count > 0
+                    ? `<span class="badge badge-danger">${v.danger_frames_count} NGUY HIỂM</span>`
+                    : `<span class="badge badge-success">0</span>`;
                 return `
                     <tr>
                         <td><strong>#${v.id}</strong></td>
                         <td>${v.filename}</td>
                         <td>${v.duration_sec}s</td>
                         <td>${v.total_frames}</td>
-                        <td><span class="badge badge-danger">${v.potholes_count} ổ gà</span></td>
-                        <td>${v.detected_frames_count} frames</td>
+                        <td><span class="badge badge-warning">${v.warning_frames_count} khung</span></td>
+                        <td>${dangerBadge}</td>
+                        <td><strong class="${v.min_ttc_sec != null && v.min_ttc_sec <= 2 ? "text-rose" : ""}">${ttc}</strong></td>
                         <td>${dt}</td>
                         <td>
                             <div style="display: flex; gap: 0.5rem;">
@@ -398,11 +432,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         </td>
                     </tr>
                 `;
-            }).join("");
+            }).join(""));
 
             lucide.createIcons();
         } catch (err) {
-            historyTbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-rose">Lỗi khi tải lịch sử: ${err.message}</td></tr>`;
+            setHtml(historyTbody, `<tr><td colspan="9" class="text-center py-4 text-rose">Lỗi khi tải lịch sử: ${err.message}</td></tr>`);
         }
     }
 
@@ -440,25 +474,26 @@ document.addEventListener("DOMContentLoaded", () => {
             const res = await fetch("/api/stats");
             const stats = await res.json();
 
-            statTotalVideos.textContent = stats.total_videos || 0;
-            statTotalPotholes.textContent = stats.total_potholes || 0;
-            statTotalFrames.textContent = stats.total_detected_frames || 0;
+            setText(statTotalVideos, stats.total_videos || 0);
+            setText(statTotalWarnings, stats.total_warning_frames || 0);
+            setText(statAvgTtc, stats.avg_danger_ttc_sec != null ? `${stats.avg_danger_ttc_sec}s` : "—");
 
-            const sev = stats.severity || { High: 0, Medium: 0, Low: 0 };
-            overallSeverityRow.innerHTML = `
+            const sev = stats.severity || { DANGER: 0, WARNING: 0, NORMAL: 0 };
+            setHtml(overallSeverityRow, `
                 <div class="card p-3">
-                    <span class="text-muted">🔴 Mức độ Cao (Nghiêm trọng)</span>
-                    <h2 class="text-rose mt-2">${sev.High} khung hình</h2>
+                    <span class="text-muted">🔴 NGUY HIỂM (TTC ≤ 2s)</span>
+                    <h2 class="text-rose mt-2">${sev.DANGER} khung hình</h2>
                 </div>
                 <div class="card p-3">
-                    <span class="text-muted">🟠 Mức độ Vừa (Cần sửa)</span>
-                    <h2 class="text-amber mt-2">${sev.Medium} khung hình</h2>
+                    <span class="text-muted">🟠 CẢNH BÁO (2s &lt; TTC ≤ 4s)</span>
+                    <h2 class="text-amber mt-2">${sev.WARNING} khung hình</h2>
                 </div>
                 <div class="card p-3">
-                    <span class="text-muted">🟢 Mức độ Nhẹ (Rạn nứt)</span>
-                    <h2 class="text-emerald mt-2">${sev.Low} khung hình</h2>
+                    <span class="text-muted">🟢 BÌNH THƯỜNG (TTC &gt; 4s)</span>
+                    <h2 class="text-emerald mt-2">${stats.total_videos ? "—" : "0"} khung hình</h2>
+                    <span class="text-muted" style="font-size: 0.75rem;">Không lưu frame bình thường</span>
                 </div>
-            `;
+            `);
         } catch (err) {
             console.error("Failed to load stats:", err);
         }
@@ -478,9 +513,9 @@ document.addEventListener("DOMContentLoaded", () => {
             
             // Clear current view
             currentVideoData = null;
-            resultsContainer.style.display = "none";
-            fileInfoPanel.style.display = "none";
-            dropZone.style.display = "flex";
+            setStyle(resultsContainer, "display", "none");
+            setStyle(fileInfoPanel, "display", "none");
+            setStyle(dropZone, "display", "flex");
             
             switchTab("upload");
         } catch (err) {

@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────
+# Forward Collision Warning (FCW) system dependencies
+#
+# IMPORTANT: this needs Python 3.12 (see requirements-fcw.txt notes).
+# PyTorch does not publish pygame-compatible wheels for 3.14, so the FCW
+# stack lives in its own virtualenv alongside the pothole one.
+#
+#   uv venv --python 3.12 .venv
+#   uv pip install --python .venv/bin/python -r requirements-fcw.txt \
+#       --index-url https://download.pytorch.org/whl/cpu
+#
+# The index-url above installs the CPU-only PyTorch build. For CUDA, drop it
+# and add the matching CUDA index instead.
+# ─────────────────────────────────────────────────────────────────────
+
+# --- AI inference ---
+torch==2.14.1
+torchvision==0.29.1
+ultralytics>=8.4.171        # YOLO detection + ByteTrack/BoT-SORT tracking
+transformers>=5.18.0        # Depth Anything V2 (metric) inference
+
+# --- Vision / numerics ---
+opencv-python>=4.9.0.80     # video I/O, drawing, optical flow
+numpy>=1.26.4
+pillow>=10.2.0
+scipy>=1.11
+
+# --- Web app (FastAPI backend + SQLite) ---
+fastapi
+uvicorn
+python-multipart
+sqlalchemy
+
+# --- Audio alerts ---
+pygame>=2.6.1               # WAV playback for warning/danger sounds
+
+# --- Tests ---
+pytest>=8.0

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#
-# run_all.sh - RoadVision Pothole Detection Launch Script
+# ─────────────────────────────────────────────────────────────────────
+# run_all.sh - RoadGuard Launch Script (Web App + FastAPI Backend)
 #
 # Cổng ứng dụng:
 #   - Web App & FastAPI Backend: http://localhost:8000
@@ -9,6 +9,9 @@
 #   chmod +x run_all.sh
 #   ./run_all.sh
 #
+# LƯU Ý: phải dùng .venv (Python 3.12). Venv cũ chạy Python 3.14 không có
+# torch/pygame nên không chạy được pipeline FCW.
+# ─────────────────────────────────────────────────────────────────────
 
 set -e
 
@@ -17,7 +20,7 @@ BACKEND_PID=""
 
 cleanup() {
     echo ""
-    echo ">>> Đang dừng RoadVision..."
+    echo ">>> Đang dừng RoadGuard..."
     [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null && echo "  [OK] Đã dừng server (PID $BACKEND_PID)"
     echo ">>> Đã dừng xong."
     exit 0
@@ -26,17 +29,21 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "============================================"
-echo "  RoadVision — Pothole Detection AI System"
+echo "  RoadGuard — Forward Collision Warning"
 echo "============================================"
 echo ""
 
-# Kích hoạt virtual environment nếu có
+# Kích hoạt virtual environment (bắt buộc .venv cho Python 3.12 + torch)
 if [ -d "$ROOT_DIR/.venv" ]; then
-    echo "[*] Kích hoạt virtual environment..."
+    echo "[*] Kích hoạt .venv (Python 3.12 + PyTorch)..."
     source "$ROOT_DIR/.venv/bin/activate"
 elif [ -d "$ROOT_DIR/venv" ]; then
-    echo "[*] Kích hoạt virtual environment..."
-    source "$ROOT_DIR/venv/bin/activate"
+    echo "[!] Cảnh báo: chỉ thấy 'venv' (Python 3.14) — thiếu torch/pygame."
+    echo "    Tạo .venv bằng: uv venv --python 3.12 $ROOT_DIR/.venv"
+    echo "                   uv pip install --python $ROOT_DIR/.venv/bin/python \\"
+    echo "                       -r $ROOT_DIR/requirements-fcw.txt \\"
+    echo "                       --index-url https://download.pytorch.org/whl/cpu"
+    exit 1
 fi
 
 # Start FastAPI Web Server (port 8000)
@@ -47,7 +54,7 @@ BACKEND_PID=$!
 
 echo ""
 echo "============================================"
-echo "  RoadVision đã sẵn sàng!"
+echo "  RoadGuard đã sẵn sàng!"
 echo "  Truy cập: http://localhost:8000"
 echo "  Nhấn Ctrl+C để dừng."
 echo "============================================"

@@ -4,3 +4,17 @@ __pycache__/
 venv/
 .env
 app/static/potholes/
+
+# FCW: generated output, downloaded model weights, build artefacts
+output/
+
+# Uploaded videos and extracted warning frames are user data and can be
+# regenerated; keeping them out of git avoids hundreds of MB per run.
+app/static/frames/
+app/static/videos/
+
+# Only best.pt is tracked (it is the trained model). Other weights are downloaded.
+*.onnx
+yolov8n.pt
+
+.pytest_cache/

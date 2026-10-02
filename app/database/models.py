@@ -1,11 +1,16 @@
 import json
 from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, Float, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
+
 from app.database.connection import Base
 
+
 class VideoRecord(Base):
-    __tablename__ = "video_records"
+    """Một video đã được phân tích bởi hệ thống FCW."""
+
+    __tablename__ = "fcw_videos"
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, nullable=False)
@@ -15,13 +20,23 @@ class VideoRecord(Base):
     total_frames = Column(Integer, default=0)
     fps = Column(Float, default=0.0)
     duration_sec = Column(Float, default=0.0)
-    potholes_count = Column(Integer, default=0)
-    detected_frames_count = Column(Integer, default=0)
+
+    # Số frame có phát sinh cảnh báo (WARNING hoặc DANGER).
+    warning_frames_count = Column(Integer, default=0)
+    # Số frame ở mức DANGER.
+    danger_frames_count = Column(Integer, default=0)
+    # TTC nhỏ nhất ghi nhận trong toàn bộ video (None nếu không có cảnh báo).
+    min_ttc_sec = Column(Float, nullable=True)
+    # Khoảng cách gần nhất tới vật thể trong ROI (mét).
+    min_distance_m = Column(Float, nullable=True)
+
     status = Column(String, default="completed")  # "processing", "completed", "failed"
     error_message = Column(String, nullable=True)
 
-    # Relationship to detected frames
-    frames = relationship("DetectedFrame", back_populates="video", cascade="all, delete-orphan", order_by="DetectedFrame.frame_number")
+    frames = relationship(
+        "WarningFrame", back_populates="video", cascade="all, delete-orphan",
+        order_by="WarningFrame.frame_number",
+    )
 
     def to_dict(self, include_frames=False):
         data = {
@@ -33,39 +48,53 @@ class VideoRecord(Base):
             "total_frames": self.total_frames,
             "fps": round(self.fps, 2) if self.fps else 0,
             "duration_sec": round(self.duration_sec, 2) if self.duration_sec else 0,
-            "potholes_count": self.potholes_count,
-            "detected_frames_count": self.detected_frames_count,
+            "warning_frames_count": self.warning_frames_count,
+            "danger_frames_count": self.danger_frames_count,
+            "min_ttc_sec": round(self.min_ttc_sec, 2) if self.min_ttc_sec is not None else None,
+            "min_distance_m": round(self.min_distance_m, 2) if self.min_distance_m is not None else None,
             "status": self.status,
-            "error_message": self.error_message
+            "error_message": self.error_message,
         }
         if include_frames:
             data["frames"] = [frame.to_dict() for frame in self.frames]
         return data
 
 
-class DetectedFrame(Base):
-    __tablename__ = "detected_frames"
+class WarningFrame(Base):
+    """Một khung hình có phát sinh cảnh báo va chạm.
+
+    Chỉ lưu frame có WARNING/DANGER để database không phình theo số frame.
+    Mọi số đo đều là *ước lượng* từ monocular depth, không phải đo đạc.
+    """
+
+    __tablename__ = "fcw_warning_frames"
 
     id = Column(Integer, primary_key=True, index=True)
-    video_id = Column(Integer, ForeignKey("video_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    video_id = Column(Integer, ForeignKey("fcw_videos.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
     frame_number = Column(Integer, nullable=False)
     timestamp_sec = Column(Float, default=0.0)
     image_path = Column(String, nullable=False)
-    pothole_count = Column(Integer, default=1)
-    max_confidence = Column(Float, nullable=False)
-    severity = Column(String, default="Medium")  # "Low", "Medium", "High"
-    confidences_json = Column(Text, default="[]")  # JSON string of list of float confidences
-    detections_json = Column(Text, default="[]")   # JSON string of list of box & conf dicts
+
+    # Mức cảnh báo của frame: "WARNING" hoặc "DANGER".
+    severity = Column(String, default="WARNING")
+    # Mục tiêu chính trong frame này.
+    track_id = Column(Integer, nullable=True)
+    class_name = Column(String, default="motorcycle")
+    distance_m = Column(Float, nullable=True)
+    closing_speed_mps = Column(Float, nullable=True)
+    ttc_sec = Column(Float, nullable=True)
+    confidence = Column(Float, default=0.0)
+    # Vận tốc ước lượng của xe (m/s), để giải thích closing speed.
+    ego_speed_mps = Column(Float, default=0.0)
+
+    # JSON string of full per-object telemetry for this frame.
+    detections_json = Column(Text, default="[]")
     detected_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     video = relationship("VideoRecord", back_populates="frames")
 
     def to_dict(self):
-        try:
-            conf_list = json.loads(self.confidences_json) if self.confidences_json else []
-        except Exception:
-            conf_list = []
-            
         try:
             det_list = json.loads(self.detections_json) if self.detections_json else []
         except Exception:
@@ -77,10 +106,14 @@ class DetectedFrame(Base):
             "frame_number": self.frame_number,
             "timestamp_sec": round(self.timestamp_sec, 2),
             "image_path": self.image_path,
-            "pothole_count": self.pothole_count,
-            "max_confidence": round(self.max_confidence, 4),
             "severity": self.severity,
-            "confidences": conf_list,
+            "track_id": self.track_id,
+            "class_name": self.class_name,
+            "distance_m": round(self.distance_m, 2) if self.distance_m is not None else None,
+            "closing_speed_mps": round(self.closing_speed_mps, 2) if self.closing_speed_mps is not None else None,
+            "ttc_sec": round(self.ttc_sec, 2) if self.ttc_sec is not None else None,
+            "confidence": round(self.confidence, 4),
+            "ego_speed_mps": round(self.ego_speed_mps, 2),
             "detections": det_list,
-            "detected_at": self.detected_at.isoformat() if self.detected_at else None
+            "detected_at": self.detected_at.isoformat() if self.detected_at else None,
         }
