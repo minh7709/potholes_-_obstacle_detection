@@ -40,7 +40,7 @@ import com.example.fcw.camera.FrameAnalyzer
 import com.example.fcw.detection.Detection
 import com.example.fcw.audio.AudioAlerter
 import com.example.fcw.config.FcwConfig
-import com.example.fcw.depth.OnnxDepthEstimator
+import com.example.fcw.depth.DepthRunner
 import com.example.fcw.detection.YoloDetector
 import com.example.fcw.risk.LevelStreak
 import com.example.fcw.risk.RiskEngine
@@ -108,7 +108,6 @@ fun CameraScreen() {
     // gap is visible rather than silently reporting a hardcoded zero.
     var egoSpeed by remember { mutableFloatStateOf(0f) }
     var egoQuality by remember { mutableFloatStateOf(0f) }
-    var lastDepthMap by remember { mutableStateOf<FloatArray?>(null) }
     var inputFps by remember { mutableStateOf(0f) }
     var showDiagnostics by remember { mutableStateOf(true) }
     var rgbMs by remember { mutableFloatStateOf(0f) }
@@ -124,8 +123,7 @@ fun CameraScreen() {
         )
     }
     val tracker = remember { ByteTracker(cfg) }
-    val depth = remember { OnnxDepthEstimator(context, netWidth = 299, netHeight = 224,
-                calibrationScale = cfg.depthScale, cfg = cfg) }
+    val depth = remember { DepthRunner(context, cfg) }
     val ego = remember { EgoMotionEstimator(
         enabled = cfg.egoMotionEnabled,
         backgroundDepthM = cfg.egoBackgroundDepthM,
@@ -154,7 +152,7 @@ fun CameraScreen() {
             "Model OK — ${detector.modelClassCount} lớp — ${detector.providerLabel}"
         } else {
             "LỖI: không nạp được model (xem logcat tag FCW)"
-        } + if (depthOk) " + Depth OK" else " — THIẾU DEPTH: ${depth.loadError}"
+        } + if (depthOk) " + Depth OK" else " — THIẾU DEPTH"
     }
 
     val analyzer = remember {
@@ -209,25 +207,22 @@ fun CameraScreen() {
                 // Depth runs on its own cadence. At ~565 ms it cannot share a frame
                 // budget with a ~280 ms YOLO, and TrackHistory interpolates across the
                 // gaps, so the gaps are cheaper than the staleness.
-                var depthMap: FloatArray? = null
-                if (depthEnabled && depth.isReady && inferCount % effectiveDepthInterval == 0) {
-                    depthMap = depth.infer(workRgb, workW, workH)
-                    depthMs = depth.inferenceMs
-                    if (depthMap != null) {
-                        lastDepthMap = depthMap
-                        depthSamples++
-                    } else {
-                        Log.w("FCW", "Depth trả về rỗng — tắt depth")
-                        depthEnabled = false
-                    }
+                if (depthEnabled && inferCount % effectiveDepthInterval == 0) {
+                    depth.request(rgb, w, h)
+                }
+                depthMs = depth.inferenceMs
+                depthSamples = depth.completed
+                val depthMap = depth.map
+                if (depth.dropped > 0 && inferCount % 30 == 0) {
+                    Log.w("FCW", "Depth bỏ ${depth.dropped} frame vì luồng depth bận")
                 }
 
                 // Ego motion every frame: optical flow is only trackable when the
                 // per-frame displacement is small, so it cannot wait for depth.
-                if (lastDepthMap != null) {
+                if (depthMap != null) {
                     egoSpeed = ego.update(
                         toGray(rgb, w, h), w, h, captureSeconds.toDouble(),
-                        lastDepthMap!!, cfg.depthNetWidth, cfg.depthNetHeight
+                        depthMap, depth.width, depth.height
                     )
                     egoQuality = ego.quality
                 }
@@ -251,7 +246,7 @@ fun CameraScreen() {
                     val hist = tracker.history[id] ?: continue
                     var handled = false
                     if (depthMap != null) {
-                        val dist = depth.sampleDistance(depthMap, d.x1, d.y1, d.x2, d.y2, w, h)
+                        val dist = depth.sampleFor(d, w, h)
                         if (dist != null) {
                             hist.update(captureSeconds.toDouble(), dist, d, "measured")
                             handled = true
@@ -267,7 +262,7 @@ fun CameraScreen() {
                 }
                 // Remove the ego's own motion before judging closing speed: a parked car
                 // in front of a moving camera has apparent closing equal to ego speed.
-                if (lastDepthMap != null) {
+                if (depthMap != null) {
                     for (d in tracked) {
                         val id = d.trackId ?: continue
                         tracker.history[id]?.estimateSpeed(egoSpeed)
@@ -353,7 +348,7 @@ fun CameraScreen() {
             analyzer.shutdown()
             audio.release()
             detector.close()
-            depth.close()
+            depth.shutdown()
         }
     }
 
