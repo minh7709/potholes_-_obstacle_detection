@@ -9,3 +9,6 @@ apk-backup/
 # Offline model scratch: 880 MB of exports kept only so the harness can
 # re-verify a claim. The shipped models live in app/src/main/assets/models.
 tools/offline_models/
+# Model nặng không lên git. .gitignore ở gốc đã chặn *.onnx và giữ nguyên
+# như vậy: build lại từ repo sẽ thiếu model, phải export lại bằng
+# tools/export_depth.py và bản export YOLO tương ứng.
