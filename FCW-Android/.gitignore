@@ -1,0 +1,11 @@
+# Build output
+build/
+.gradle/
+local.properties
+
+# APK backups: 87 MB each, reproducible from source.
+apk-backup/
+
+# Offline model scratch: 880 MB of exports kept only so the harness can
+# re-verify a claim. The shipped models live in app/src/main/assets/models.
+tools/offline_models/

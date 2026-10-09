@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fcw_normal">#FF00C800</color>
+    <color name="fcw_warning">#FF00A5FF</color>
+    <color name="fcw_danger">#FFFF0000</color>
+    <color name="fcw_corridor">#FFFFD700</color>
+</resources>
