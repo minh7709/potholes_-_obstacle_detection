@@ -38,7 +38,8 @@ class DepthRunner(
     private val cfg = cfg
     private val estimator = OnnxDepthEstimator(
         context, netWidth = cfg.depthNetWidth, netHeight = cfg.depthNetHeight,
-        calibrationScale = cfg.depthScale, cfg = cfg
+        calibrationScale = cfg.depthScale, cfg = cfg,
+        threads = (Runtime.getRuntime().availableProcessors() / 3).coerceIn(1, 2)
     )
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "fcw-depth").apply { priority = Thread.NORM_PRIORITY + 1 }

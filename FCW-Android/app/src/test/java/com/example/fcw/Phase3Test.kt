@@ -75,16 +75,16 @@ class Phase3Test {
     @Test
     fun `roi and corridor match the fractions in config yaml`() {
         val roi = RiskEngine.roadRoi(1000, 800, cfg)
-        assertEquals("x_min 0.20", 200, roi[0])
-        assertEquals("y_min 0.30", 240, roi[1])
-        assertEquals("x_max 0.80", 800, roi[2])
-        assertEquals("y_max 0.97", 776, roi[3])
+        assertEquals("x_min 0.10", 100, roi[0])
+        assertEquals("y_min 0.22", 176, roi[1])
+        assertEquals("x_max 0.90", 900, roi[2])
+        assertEquals("y_max 1.00", 800, roi[3])
 
         val corridor = RiskEngine.warningCorridor(1000, 800, cfg)
-        assertEquals(330, corridor[0])
-        assertEquals(256, corridor[1])
-        assertEquals(670, corridor[2])
-        assertEquals(776, corridor[3])
+        assertEquals(220, corridor[0])
+        assertEquals(208, corridor[1])
+        assertEquals(780, corridor[2])
+        assertEquals(800, corridor[3])
     }
 
     @Test

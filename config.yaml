@@ -72,7 +72,12 @@ tracking:
   # How many frames a track survives without a detection before being
   # dropped. This is what keeps one ID across brief occlusions.
   max_age: 30
-  min_hits: 3
+  # Was 3. At ~1 FPS that alone delayed any assessment of a cut-in vehicle by
+  # 3.3 s, and the emergency warning in RiskEngine.assess could never be reached
+  # because the tracker dropped the track first. Now one sighting creates the track;
+  # raising the alarm still needs corridor + road-vehicle class + close range or low
+  # TTC, all checked in RiskEngine.assess.
+  min_hits: 1
   buffer: 30
 
 speed:
@@ -130,10 +135,13 @@ collision:
 roi:
   # Wide region: drawn for context, and gates whether an object is tracked as a
   # road object at all.
-  x_min: 0.20
-  x_max: 0.80
-  y_min: 0.30
-  y_max: 0.97
+  # Widened from 0.20-0.80 / 0.30-0.97: a vehicle cutting in from an adjacent
+  # lane starts outside the old band, so it was never even tracked as a road
+  # object during the merge, which is the moment the warning has to arrive.
+  x_min: 0.10
+  x_max: 0.90
+  y_min: 0.22
+  y_max: 1.00
 
   # WARNING CORRIDOR — narrower. This is the only region where an object may
   # escalate to WARNING/DANGER and sound the alarm.
@@ -145,12 +153,16 @@ roi:
   #
   # A ±17% band is roughly the middle third of the road ahead. Widen it if the
   # camera is offset from the driver's eyeline or mounted off-centre.
-  warn_x_min: 0.33
-  warn_x_max: 0.67
-  warn_y_min: 0.32
+  #
+  # Widened to ±28% on request, for cutting-in vehicles: the one that matters
+  # most moves laterally, so it spends its critical approach crossing the old
+  # boundary. Cost is more roadside cones and oncoming traffic qualifying.
+  warn_x_min: 0.22
+  warn_x_max: 0.78
+  warn_y_min: 0.26
   # Kept wide at the bottom on purpose: a target that is very close occupies the
   # lower frame, and that is exactly the case worth warning about.
-  warn_y_max: 0.97
+  warn_y_max: 1.00
 
   # How close to frame centre an object must be (1.0 = anywhere). Only affects
   # the ranking score, not the hard corridor test above.

@@ -17,27 +17,83 @@ data class FcwConfig(
     val confirmFrames: Int = 3,
 
     // roi: worth tracking
-    val roiXMin: Float = 0.20f,
-    val roiXMax: Float = 0.80f,
-    val roiYMin: Float = 0.30f,
-    val roiYMax: Float = 0.97f,
+    val roiXMin: Float = 0.10f,
+    val roiXMax: Float = 0.90f,
+    val roiYMin: Float = 0.22f,
+    val roiYMax: Float = 1.00f,
 
     // roi: may raise a warning
-    val warnXMin: Float = 0.33f,
-    val warnXMax: Float = 0.67f,
-    val warnYMin: Float = 0.32f,
-    val warnYMax: Float = 0.97f,
+    val warnXMin: Float = 0.22f,
+    val warnXMax: Float = 0.78f,
+    val warnYMin: Float = 0.26f,
+    val warnYMax: Float = 1.00f,
     val centerTolerance: Float = 0.35f,
 
     // classes
     val primaryClasses: Set<String> = setOf("motorbike"),
+    /**
+     * YOLO network input edge, in pixels.
+     *
+     * This must match the exported ONNX exactly. Both `best.onnx` and `best_fp16.onnx`
+     * are exported with static 640x640 inputs, so feeding a 448 tensor throws on every
+     * inference and the HUD reports INFERENCE with a rising fail count. Lowering it
+     * without re-exporting is not a speed knob, it is a crash.
+     *
+     * Measured cost of a smaller edge is real: at 448 the same clip yielded 53
+     * detections against 73 at 640, and lost 4 of 5 on its first frame, which is
+     * exactly the distant cut-in vehicle the warning exists for. Keep this at 640
+     * unless the model asset is re-exported to match.
+     */
+    val yoloInputSize: Int = 640,
+
+    /**
+     * Emergency thresholds that bypass the multi-frame confirmation.
+     *
+     * The confirmation rules (min_hits 3, confirm_frames 3, speed min_samples 4) are
+     * right for a vehicle already ahead in the same lane, which stays in view for many
+     * seconds. They are wrong for a cut-in or a motorcycle appearing: those objects are
+     * new and occupy the corridor for only a moment, and at 1.4 FPS the confirmation
+     * alone takes about 3.6 s, by which time the hazard is behind the windscreen.
+     *
+     * So a corridor object that is already very close, or already closing very fast,
+     * is allowed to sound the alarm on the first frame it is seen. The corridor test
+     * and these two numbers are what suppress false positives here, not track history.
+     *
+     * Cost: more false alarms for near misses at speed. Bought deliberately.
+     */
+    val urgentDistanceM: Float = 6.0f,
+    val urgentTtc: Float = 1.5f,
+
+    /**
+     * Classes allowed to use the emergency path. A pedestrian on the pavement is
+     * tracked but never alarms at this range, so it is not on the list.
+     */
+    val urgentClasses: Set<String> = setOf("car", "motorcycle", "motorbike", "truck", "bus", "van", "auto", "threewheeler"),
+
     val confThreshold: Float = 0.45f,
     val iouThreshold: Float = 0.5f,
     val minAreaRatio: Float = 0.0008f,
 
     // tracking
     val maxAge: Int = 30,
-    val minHits: Int = 3,
+
+    /**
+     * Frames before a track counts as established. Dropped from 3 to 1.
+     *
+     * At 3 and roughly 1 FPS this alone cost 3.3 s before a vehicle that had just cut
+     * in could be assessed at all, and `Track 0/0` on the test device was the symptom:
+     * the confirmation lived in the tracker, one layer below the emergency warning, so
+     * lowering the warning thresholds could never reach a cut-in.
+     *
+     * A one-frame track is still not enough to sound the alarm on its own. The
+     * emergency path in RiskEngine.assess additionally requires the object to sit in
+     * the warning corridor, be a road-vehicle class, and be measured at
+     * [urgentDistanceM] or closing at [urgentTtc]. A first sighting cannot have a
+     * valid TTC at all, because TTC needs speed.min_samples distance samples first,
+     * so in practice only a genuine close-range reading can set the alarm off.
+     * Non-urgent tracks still need [confirmFrames] consecutive agreeing frames.
+     */
+    val minHits: Int = 1,
     val buffer: Int = 30,
 
     // speed

@@ -19,6 +19,17 @@ class TrackHistory(
     var className: String = "unknown",
     private val cfg: FcwConfig = FcwConfig()
 ) {
+    companion object {
+        /**
+         * Dưới ngưỡng này thì coi như không tiến lại.
+         *
+         * 0.15 m/s ~ 0.5 km/h: chậm hơn ngưỡng này là rung tay lái và nhiễu đo, mà
+         * nếu coi là tiến lại thì TTC = khoảng cách / tốc độ rất nhỏ ra hàng nghìn
+         * giây và bị hiển thị như một phát hiện có thật.
+         */
+        const val MIN_CLOSING_SPEED_MPS = 0.15f
+    }
+
     /** Raw (timestamp, distance) samples, oldest first. */
     private val samples = ArrayDeque<Sample>()
 
@@ -164,7 +175,10 @@ class TrackHistory(
         if (!speedValid) return Float.MAX_VALUE to false
         val d = fitDistance ?: distance
         if (d == null || !d.isFinite() || d <= 0f) return Float.MAX_VALUE to false
-        if (closingSpeed <= 1e-3f) return Float.MAX_VALUE to false
+        // 1e-3 m/s là nhiễu tức thời, không phải chuyển động thật. Trên khung hình
+        // thật, nhiễu đo được vài mm/s và ngưỡng cũ cho ra TTC hàng nghìn giây
+        // (đã thấy 1104.89s trên máy). Dưới ngưỡng này, khoảng cách coi như đứng yên.
+        if (closingSpeed < MIN_CLOSING_SPEED_MPS) return Float.MAX_VALUE to false
         return d / closingSpeed to true
     }
 

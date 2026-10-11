@@ -5,6 +5,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.example.fcw.utils.ImageUtils
 import java.nio.FloatBuffer
@@ -37,7 +38,14 @@ class YoloDetector(
     private val wantedClasses: Set<String> = DEFAULT_WANTED_CLASSES,
     private val preferNnapi: Boolean = true,
     private val cfg: com.example.fcw.config.FcwConfig = com.example.fcw.config.FcwConfig(),
-    private val trainingAspect: Float = 4f / 3f
+    private val trainingAspect: Float = 4f / 3f,
+    /**
+     * Split from the core count rather than taken from it. Depth runs at the same
+     * time and asked for a share of its own; when both asked for everything, the two
+     * sessions together oversubscribed the device and each ran slower than it would
+     * have alone.
+     */
+    private val threads: Int = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
 ) {
     /** Where [detect] stopped. A returned-empty list with no stage change used to be
      *  indistinguishable between "no vehicles in view" and "never ran at all". */
@@ -109,10 +117,15 @@ class YoloDetector(
     private val rgbCache = FrameRgbCache()
 
     /** How many RGB conversions have run. Exposed so the HUD can prove the cache works. */
-    val rgbConversionCount: Int get() = rgbCache.conversionCount
+    val rgbConversionCount: Int get() = if (rgbCount > 0) rgbCount else rgbCache.conversionCount
 
     /** Milliseconds spent turning a frame into RGB, counting only frames that converted. */
-    val rgbMilliseconds: Float get() = rgbCache.milliseconds
+    /** Rolling average of the live capture conversion, see [readRgbInto]. */
+    private var rgbMs = 0f
+    private var rgbCount = 0
+
+    /** Conversion time for the path the pipeline actually runs. */
+    val rgbMilliseconds: Float get() = if (rgbCount > 0) rgbMs else rgbCache.milliseconds
 
     /** Last [DetectStage] reached. Read by the HUD so a stall is self-diagnosing. */
     var lastStage: DetectStage = DetectStage.NO_SESSION
@@ -177,6 +190,26 @@ class YoloDetector(
     private var nnapiSession: OrtSession? = null
     private var cpuSession: OrtSession? = null
     private var activeSession: OrtSession? = null
+
+    /**
+     * Which session inference is actually using, as a short HUD string.
+     *
+     * NNAPI is requested first and falls back to CPU silently, so a device can end up
+     * running the int8 CPU graph without ever showing it. That matters because the
+     * int8 CPU graph is built from ConvInteger, the same op ORT Android has no kernel
+     * for in the depth model. On-screen is the only place this is visible without a
+     * cable, so it belongs here rather than in logcat.
+     */
+    val sessionLabel: String
+        get() = when {
+            // Both candidate sessions are closed once the benchmark picks a winner
+            // (see runInference), so their fields are null even while inference runs
+            // fine on the survivor. Reading them reported "not loaded" on a healthy
+            // app. providerLabel is what actually records the outcome.
+            providerLabel.isNotBlank() -> providerLabel
+            nnapiSession != null || cpuSession != null -> "đang benchmark"
+            else -> "CHƯA NẠP"
+        }
     private var benchDone = false
 
     /** Inference times for the first few runs, to separate warmup from steady state. */
@@ -195,8 +228,6 @@ class YoloDetector(
      */
     fun load(): Boolean {
         return try {
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
-
             // Try NNAPI with fp16 first, then CPU with int8. A device that refuses to
             // build the NNAPI session must still run, so the fallback is not optional.
             if (preferNnapi) nnapiSession = tryCreate(context, MODEL_ASSET_NNAPI, threads, true)
@@ -640,10 +671,22 @@ class YoloDetector(
      * Converts a frame into a caller-supplied buffer. Used by the analyzer, which must
      * close the frame immediately and cannot hand an ImageProxy to the worker.
      */
+    /**
+     * Converts straight into [out] and times it.
+     *
+     * The timers used to live only on the readRgb path, and the live pipeline calls
+     * this one, so the HUD showed "RGB 0ms x0" and the conversion ran unmeasured. That
+     * is the stage most likely to dominate: it walks all 1.23M pixels of 1280x960 one
+     * at a time in Kotlin, then a second full pass shrinks it for inference.
+     */
     fun readRgbInto(image: androidx.camera.core.ImageProxy, out: ByteArray): Boolean {
         if (image.width <= 0 || image.height <= 0) return false
         if (out.size < ImageUtils.rgbBufferSize(image.width, image.height)) return false
-        return ImageUtils.toRgb(image, out) is ImageUtils.Result.Ok
+        val t0 = SystemClock.elapsedRealtimeNanos()
+        val ok = ImageUtils.toRgb(image, out) is ImageUtils.Result.Ok
+        rgbMs = rgbMs * 0.8f + (SystemClock.elapsedRealtimeNanos() - t0) / 1e6f * 0.2f
+        rgbCount++
+        return ok
     }
 
     private fun readRgb(image: androidx.camera.core.ImageProxy): ImageUtils.Result =

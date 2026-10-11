@@ -38,7 +38,9 @@ object RiskEngine {
         val distanceForSort: Float? = null,
         /** Frames the same level has been held, for the confirmation rule. */
         val consecutiveCount: Int = 0,
-        val confirmed: Boolean = false
+        val confirmed: Boolean = false,
+        /** Cleared the confirmation gate on proximity or TTC. See FcwConfig.urgentDistanceM. */
+        val urgent: Boolean = false
     )
 
     /** Maps a TTC in seconds (or MAX_VALUE for infinity) to a level. */
@@ -153,10 +155,15 @@ object RiskEngine {
         roi: IntArray,
         corridor: IntArray,
         cfg: FcwConfig,
-        consecutive: Int = 0
+        consecutive: Int = 0,
+        instantDistanceM: Float? = null
     ): Assessment {
         val (ttc, ttcValid) = history.timeToCollision()
-        val distance = history.distance
+        // Depth takes ~900 ms and was producing a handful of samples per session, so
+        // most assessments had no depth at all. The geometric estimate is wrong by
+        // about 30%, which beats knowing nothing when the decision is a 6 m threshold
+        // and the vehicle is a new cut-in.
+        val distance = history.distance ?: instantDistanceM
 
         val levelTtc = classifyTtc(ttc, cfg)
         val levelDist = classifyDistance(distance, cfg)
@@ -183,6 +190,14 @@ object RiskEngine {
             history.framesSeen >= maxOf(cfg.minHits, 1) &&
             consecutive >= cfg.confirmFrames
 
+        // Emergency path. Only for something already in the corridor, already very
+        // close, or already closing fast, and only for classes a driver would call a
+        // collision risk. Everything else still has to earn its warning.
+        val urgentClass = history.className.lowercase() in cfg.urgentClasses
+        val veryClose = distance != null && distance.isFinite() && distance <= cfg.urgentDistanceM
+        val veryFast = ttcValid && ttc.isFinite() && ttc < Float.MAX_VALUE && ttc <= cfg.urgentTtc
+        val urgent = level != Level.NORMAL && centered && urgentClass && (veryClose || veryFast)
+
         return Assessment(
             trackId = history.trackId,
             className = history.className,
@@ -203,7 +218,8 @@ object RiskEngine {
             distanceSource = history.distanceSource,
             distanceForSort = distance,
             consecutiveCount = consecutive,
-            confirmed = confirmed
+            confirmed = confirmed || urgent,
+            urgent = urgent
         )
     }
 

@@ -1,5 +1,6 @@
 package com.example.fcw.ui
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.Preview
 import androidx.compose.foundation.background
@@ -41,6 +42,7 @@ import com.example.fcw.detection.Detection
 import com.example.fcw.audio.AudioAlerter
 import com.example.fcw.config.FcwConfig
 import com.example.fcw.depth.DepthRunner
+import com.example.fcw.depth.InstantDistance
 import com.example.fcw.detection.YoloDetector
 import com.example.fcw.risk.LevelStreak
 import com.example.fcw.risk.RiskEngine
@@ -76,6 +78,8 @@ fun CameraScreen() {
     var modelStatus by remember { mutableStateOf("Đang nạp model...") }
     var detectStage by remember { mutableStateOf(YoloDetector.DetectStage.NO_SESSION) }
     var failStreak by remember { mutableStateOf(0) }
+    var focalPx by remember { mutableFloatStateOf(0f) }
+    var sessionLabel by remember { mutableStateOf("CHƯA NẠP") }
     var frameLayout by remember { mutableStateOf("(chưa có frame)") }
     var viewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
@@ -117,9 +121,10 @@ fun CameraScreen() {
     val cfg = remember { FcwConfig() }
     val detector = remember {
         YoloDetector(
-            context = context, inputSize = 640,
+            context = context, inputSize = cfg.yoloInputSize,
             confThreshold = 0.45f, iouThreshold = 0.5f,
-            cfg = FcwConfig()
+            cfg = cfg,
+            threads = (Runtime.getRuntime().availableProcessors() * 2 / 3).coerceAtLeast(2)
         )
     }
     val tracker = remember { ByteTracker(cfg) }
@@ -136,7 +141,12 @@ fun CameraScreen() {
     val audio = remember { AudioAlerter(context, cfg) }
     val adaptive = remember { AdaptiveController(cfg) }
     // Adaptive target FPS is expressed as a processing interval in inference frames.
-    val effectiveDepthInterval = adaptive.depthInterval.coerceAtLeast(1)
+    var lastDepthRequestMs by remember { mutableLongStateOf(0L) }
+    val depthIntervalMs = (adaptive.depthInterval * 1000L).coerceAtLeast(300L)
+
+    // 960*720*3 bytes. Allocated per frame this was 2 MB of garbage every frame,
+    // which the collector pays for inside the frame we are trying to keep short.
+    val smallBuffer = remember { ByteArray(cfg.maxWidth * cfg.maxHeight * 3) }
 
     LaunchedEffect(Unit) {
         val ok = detector.load()
@@ -169,7 +179,6 @@ fun CameraScreen() {
                 // config.yaml input.max_width/max_height: shrink before inference, then
                 // scale boxes back so depth sampling, the corridor test and the overlay
                 // all keep working in full-frame coordinates.
-                val smallBuffer = ByteArray(cfg.maxWidth * cfg.maxHeight * 3)
                 var workRgb = rgb
                 var workW = w
                 var workH = h
@@ -199,15 +208,21 @@ fun CameraScreen() {
                 frameLayout = detector.frameLayout
                 inferCount++
 
-                val roi = RiskEngine.roadRoi(w, h, cfg)
-                val corridor = RiskEngine.warningCorridor(w, h, cfg)
+                val roi = RiskEngine.roadRoi(visibleRegion, cfg)
+                val corridor = RiskEngine.warningCorridor(visibleRegion, cfg)
                 roiBox = roi
                 corridorBox = corridor
 
                 // Depth runs on its own cadence. At ~565 ms it cannot share a frame
                 // budget with a ~280 ms YOLO, and TrackHistory interpolates across the
                 // gaps, so the gaps are cheaper than the staleness.
-                if (depthEnabled && inferCount % effectiveDepthInterval == 0) {
+                // Cadence is wall-clock, not frame count. The whole point of this cap
+                // is that a frame is analysed within a fixed time no matter how slow
+                // the last one was; counting frames made the gap depend on FPS, which
+                // is exactly the thing being fixed.
+                val nowMs = SystemClock.elapsedRealtime()
+                if (depthEnabled && nowMs - lastDepthRequestMs >= depthIntervalMs) {
+                    lastDepthRequestMs = nowMs
                     depth.request(rgb, w, h)
                 }
                 depthMs = depth.inferenceMs
@@ -272,11 +287,22 @@ fun CameraScreen() {
                 val list = tracked.mapNotNull { d ->
                     val id = d.trackId ?: return@mapNotNull null
                     val hist = tracker.history[id] ?: return@mapNotNull null
+                    // Focal length is fixed per camera but is expressed in pixels, so
+                    // it depends on the analysis width. 1280x720 was requested and this
+                    // device delivered 1280x960, so take the width from the frame in
+                    // hand rather than from the request.
+                    val fx = focalPx.takeIf { it > 0f }
+                        ?: cameraManager?.focalPxFor(w)?.also { focalPx = it } ?: 0f
+                    val instant = InstantDistance.estimate(
+                        fx, d.x2 - d.x1, hist.className
+                    )
                     val base = RiskEngine.assess(
                         hist, d.centerX, d.centerY, w, h, roi, corridor, cfg,
-                        consecutive = streak.get(id)
+                        consecutive = streak.get(id),
+                        instantDistanceM = instant
                     )
                     val count = streak.advance(id, base.level)
+                    val instantLabel = instant?.let { " ~${"%.1f".format(it)}m" } ?: ""
                     base.copy(
                         consecutiveCount = count,
                         confirmed = base.level != RiskEngine.Level.NORMAL &&
@@ -364,6 +390,7 @@ fun CameraScreen() {
             failStreak = detector.failStreak
             frameLayout = detector.frameLayout
             visibleRegion = detector.visibleRegion
+            sessionLabel = detector.sessionLabel
 
             // Adaptive load control. Only sample rates move; TTC thresholds never do.
             adaptive.noteFps(analyzer.processingFps, System.currentTimeMillis() / 1000.0)
@@ -408,7 +435,7 @@ fun CameraScreen() {
                 depthInterval = cfg.depthInterval,
                 warnCount = assessments.count { it.level == RiskEngine.Level.WARNING },
                 dangerCount = assessments.count { it.level == RiskEngine.Level.DANGER },
-                stageLabel = "${detectStage.label} | fail x$failStreak | depth $depthSamples | " +
+                stageLabel = "${detectStage.label} [$sessionLabel] | fail x$failStreak | depth $depthSamples | " +
                     "khung $frameW x$frameH | thấy ${visibleRegion.joinToString(",")}",
                 frameLayout = "$frameLayout\n" +
                     "RGB ${"%.0f".format(rgbMs)}ms x$rgbRuns | bỏ $droppedFrames | " +

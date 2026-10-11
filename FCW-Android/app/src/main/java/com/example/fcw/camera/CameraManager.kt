@@ -5,6 +5,9 @@ import android.util.Rational
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import android.hardware.camera2.CameraCharacteristics
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.core.Camera
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.ViewPort
@@ -64,6 +67,42 @@ class CameraManager(
         private set
 
     private var provider: ProcessCameraProvider? = null
+
+    private var boundCamera: Camera? = null
+
+    /** focalMm / sensorWidthMm, so that focalPx = focalRatio * imageWidthPx. */
+    private var focalRatio: Float = 0f
+
+    /** True once the hardware report gave a usable focal length. */
+    val hasFocal: Boolean get() = focalRatio > 0f
+
+    /** Focal length in pixels for a frame [imageWidthPx] wide, or 0 if unavailable. */
+    fun focalPxFor(imageWidthPx: Int): Float =
+        if (focalRatio > 0f && imageWidthPx > 0) focalRatio * imageWidthPx else 0f
+
+    /**
+     * Reads the hardware focal length and converts it to pixels.
+     *
+     * Only the ratio is stored. The pixel value depends on the analysis resolution,
+     * which the request does not pin down: 1280x720 is asked for and this device
+     * delivered 1280x960, so the width is taken from the frame in hand instead.
+     */
+    private fun readFocalLength() {
+        focalRatio = 0f
+        val cam = boundCamera ?: return
+        try {
+            val info = Camera2CameraInfo.from(cam.cameraInfo)
+            val focals = info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            val sensor = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            val mm = focals?.firstOrNull() ?: return
+            val sensorW = sensor?.width ?: return
+            if (mm <= 0f || sensorW <= 0f) return
+            focalRatio = mm / sensorW
+            Log.i(TAG, "Tiêu cự ${"%.2f".format(mm)}mm / cảm biến ${"%.2f".format(sensorW)}mm")
+        } catch (e: Throwable) {
+            Log.w(TAG, "Không đọc được tiêu cự: ${e.message}")
+        }
+    }
     private var analysisUseCase: ImageAnalysis? = null
     private var selectorChosen: CameraSelector? = null
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -145,7 +184,7 @@ class CameraManager(
 
         try {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
+            boundCamera = cameraProvider.bindToLifecycle(
                 lifecycleOwner, selector,
                 UseCaseGroup.Builder()
                     .setViewPort(vp)
@@ -153,6 +192,7 @@ class CameraManager(
                     .addUseCase(analysis)
                     .build()
             )
+            readFocalLength()
             isRunning = true
             Log.i(TAG, "CameraX sẵn sàng ($selector) viewPort=${viewWidth}x$viewHeight rot=$rotation")
         } catch (e: Exception) {
@@ -201,7 +241,7 @@ class CameraManager(
             viewPort = vp
 
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
+            boundCamera = cameraProvider.bindToLifecycle(
                 lifecycleOwner, selector,
                 UseCaseGroup.Builder()
                     .setViewPort(vp)

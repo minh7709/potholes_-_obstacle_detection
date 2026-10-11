@@ -38,7 +38,8 @@ class OnnxDepthEstimator(
     private val netWidth: Int = 299,
     private val netHeight: Int = 224,
     private val calibrationScale: Float = 1f,
-    private val cfg: com.example.fcw.config.FcwConfig = com.example.fcw.config.FcwConfig()
+    private val cfg: com.example.fcw.config.FcwConfig = com.example.fcw.config.FcwConfig(),
+    private val threads: Int = 2
 ) {
     companion object {
         const val TAG = "FCW"
@@ -71,7 +72,11 @@ class OnnxDepthEstimator(
     fun load(): Boolean = try {
         val bytes = context.assets.open(MODEL_ASSET).use { it.readBytes() }
         val options = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+            // Depth gets a fixed small slice. It used to take up to 4 threads while
+            // YOLO also asked for every core, so two sessions oversubscribed the
+            // device and each finished slower than it would have run alone. Depth runs
+            // at a fraction of the frame rate, so a small share costs it nothing.
+            setIntraOpNumThreads(threads.coerceIn(1, 2))
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         }
         val s = env.createSession(bytes, options)
