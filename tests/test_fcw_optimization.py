@@ -726,9 +726,9 @@ def test_gate_boundary_is_inclusive():
     x_min, _, x_max, _ = warning_corridor((720, 1280), cfg)
     inside_lo = (x_min + 1) / 1280
     inside_hi = (x_max - 1) / 1280
-    assert _risk_at(inside_lo)["in_warning_corridor"] is True
-    assert _risk_at(inside_hi)["in_warning_corridor"] is True
-    assert _risk_at(x_min / 1280 - 0.02)["in_warning_corridor"] is False
+    assert _risk_at(inside_lo, cfg=cfg)["in_warning_corridor"] is True
+    assert _risk_at(inside_hi, cfg=cfg)["in_warning_corridor"] is True
+    assert _risk_at(x_min / 1280 - 0.02, cfg=cfg)["in_warning_corridor"] is False
 
 
 def test_low_object_below_corridor_is_suppressed():

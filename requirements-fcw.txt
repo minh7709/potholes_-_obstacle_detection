@@ -23,7 +23,7 @@ transformers>=5.18.0        # Depth Anything V2 (metric) inference
 opencv-python>=4.9.0.80     # video I/O, drawing, optical flow
 numpy>=1.26.4
 pillow>=10.2.0
-scipy>=1.11
+scipy>=1.11,<1.14
 
 # --- Web app (FastAPI backend + SQLite) ---
 fastapi
