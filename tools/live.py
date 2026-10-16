@@ -87,6 +87,10 @@ def build_parser():
         "--no-display", action="store_true",
         help="Run headless (no OpenCV window). Useful for pure benchmark.",
     )
+    p.add_argument(
+        "--record", action="store_true",
+        help="Record annotated live video output with HUD to runs/ directory as MP4.",
+    )
     return p
 
 
@@ -350,6 +354,17 @@ def main():
     if benchmark:
         print(f"Benchmark CSV: {benchmark.path}", flush=True)
 
+    # ── Video recorder setup ──
+    recorder = None
+    rec_path = None
+    if args.record:
+        os.makedirs(BENCHMARK_DIR, exist_ok=True)
+        rec_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rec_path = os.path.join(BENCHMARK_DIR, f"live_recording_{rec_tag}.avi")
+        fourcc = cv2.VideoWriter_fourcc(*"XVID")
+        recorder = cv2.VideoWriter(rec_path, fourcc, 20.0, (proc_w, proc_h))
+        print(f"Recording Video: {rec_path}", flush=True)
+
     # ── Metrics ──
     metrics = FrameMetrics()
     shown_keys = False
@@ -383,6 +398,9 @@ def main():
             draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h)
             cv2.imshow(WINDOW_NAME, drawn)
             cv2.waitKey(1)
+
+        if recorder and drawn is not None:
+            recorder.write(drawn)
 
         # Main frame loop
         while True:
@@ -457,6 +475,12 @@ def main():
                 if key in (27, ord("q")):
                     print("Quit by user.", flush=True)
                     break
+            elif recorder and drawn is not None:
+                draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h)
+
+            # ── Record video ──
+            if recorder and drawn is not None:
+                recorder.write(drawn)
 
             # ── Benchmark row ──
             if benchmark and isinstance(res, dict):
@@ -499,6 +523,24 @@ def main():
         if benchmark:
             benchmark.close()
             print(f"Benchmark saved: {benchmark.path}", flush=True)
+        if recorder is not None:
+            recorder.release()
+            print(f"Recorded video saved: {rec_path}", flush=True)
+            try:
+                import imageio_ffmpeg
+                import subprocess
+                ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                mp4_out = rec_path.rsplit(".", 1)[0] + ".mp4"
+                print(f"Finalizing standard H.264 MP4: {mp4_out}...", flush=True)
+                cmd = [
+                    ffmpeg_exe, "-y", "-i", rec_path,
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart", mp4_out
+                ]
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                print(f"MP4 ready to play: {mp4_out}", flush=True)
+            except Exception:
+                pass
 
     elapsed = time.perf_counter() - metrics._start_time
     print(f"Done: {metrics.total_frames} frames in {elapsed:.1f}s "

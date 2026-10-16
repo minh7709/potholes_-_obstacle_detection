@@ -1,0 +1,306 @@
+% ==============================================================================
+% MỤC 3: PHƯƠNG PHÁP NGHIÊN CỨU (METHODOLOGY)
+% Đề tài: Hệ Thống Phát Hiện Ổ Gà và Vật Cản Đường Bộ và Cảnh Báo Sớm Thời Gian Thực
+%         Dựa Trên Mô Hình YOLO11n
+% Format chuẩn hóa theo phong cách bài báo khoa học Tech Science Press (CMC)
+% ==============================================================================
+
+\section{PHƯƠNG PHÁP NGHIÊN CỨU (METHODOLOGY)}
+\label{sec:methodology}
+
+Để giải quyết đồng thời bài toán nhận diện chính xác các hư hỏng mặt đường dạng âm (ổ gà - \textit{potholes}), các chướng ngại vật kích thước nhỏ, đa dạng và bảo đảm khả năng phản hồi thời gian thực trên các thiết bị tính toán biên có tài nguyên hạn chế, nghiên cứu đề xuất một khung phương pháp luận toàn diện gồm ba hợp phần:
+\begin{enumerate}
+    \item \textbf{Xây dựng và chuẩn hóa bộ dữ liệu đa lớp chuyên dụng (Constructing the Dataset):} Quy trình 4 bước thu thập, tiền xử lý, tăng cường dữ liệu và biên soạn bộ dữ liệu đường bộ gồm 15 lớp đối tượng vật cản đặc thù tại Việt Nam.
+    \item \textbf{Kiến trúc mô hình YOLO11n (Network Architecture of YOLO11n):} Trình bày cấu trúc mạng học sâu nhẹ tiên tiến YOLO11n với các module C3k2, SPPF, đầu phát hiện tách rời không neo (Decoupled Anchor-free Head) và phân tích lý thuyết lựa chọn bộ tối ưu hóa SGDM thay vì Adam.
+    \item \textbf{Cơ sở lý thuyết và các chỉ số hiệu năng (Theoretical Foundations and Performance Metrics):} Hợp nhất toàn bộ cơ sở lý thuyết, công thức toán học của bài toán phát hiện đối tượng, ước lượng khoảng cách độ sâu, động học đánh giá rủi ro va chạm và các chỉ số đo kiểm thời gian thực của phần mềm.
+\end{enumerate}
+
+% ------------------------------------------------------------------------------
+\subsection{Xây Dựng Bộ Dữ Liệu (Constructing the Dataset)}
+\label{subsec:xay_dung_du_lieu}
+
+Quy trình chuẩn bị dữ liệu được thực hiện nghiêm ngặt qua 4 giai đoạn chuẩn hóa:
+\begin{enumerate}
+    \item \textbf{Thu thập dữ liệu (Data Collection):} Hình ảnh được tổng hợp có chọn lọc từ các kho dữ liệu công khai (Roboflow Universe Projects, Pothole-600, RTK Road Obstacle) kết hợp với các đoạn video hành trình (dashcam footage) ghi nhận thực tế trên đường phố Việt Nam ở độ phân giải cao. Dữ liệu bao quát đa dạng điều kiện môi trường: nắng gắt chói lóa, trời râm mát, bóng râm cây cối đổ trên mặt đường, hoàng hôn và ban đêm có ánh đèn pha.
+    \item \textbf{Tiền xử lý dữ liệu (Preprocessing):} Loại bỏ thông tin hướng xoay EXIF (\textit{EXIF Orientation Tags}) nhằm ngăn chặn hiện tượng xoay ngược khung hình. Các nhãn đối tượng được chuẩn hóa về định dạng nhãn chuẩn YOLO (\texttt{.txt}). Ảnh đầu vào được đưa về kích thước vuông chuẩn $640 \times 640$ pixels bằng phương pháp căn đệm bảo toàn tỷ lệ khung hình (\textit{Letterbox Resizing}).
+    \item \textbf{Tăng cường dữ liệu (Data Augmentation):} Áp dụng chuỗi kỹ thuật tăng cường đa dạng:
+    \begin{itemize}
+        \item \textit{Biến đổi không gian:} Lật ảnh đối xứng gương theo trục ngang (\textit{Horizontal Flip}) với xác suất $p = 0,5$; xoay ngẫu nhiên trong góc hẹp $\theta \in [-15^\circ, +15^\circ]$; thu phóng và cắt xén ngẫu nhiên (\textit{Random Crop \& Zoom}) trong biên độ $0\% - 20\%$.
+        \item \textit{Biến đổi quang học và màu sắc:} Nhiễu màu ngẫu nhiên trong không gian HSV (Hue $\pm 0,015$, Saturation $\pm 0,7$, Value/Brightness $\pm 0,4$) nhằm mô phỏng các điều kiện phơi sáng và bóng tối cục bộ trên mặt đường.
+        \item \textit{Ghép ảnh Mosaic:} Kết hợp 4 mảnh hình ảnh từ các ngữ cảnh khác nhau thành một khung hình tổng hợp với hệ số $mosaic = 1,0$ trong 90 epochs đầu tiên và tắt hoàn toàn (\textit{Close Mosaic}) trong 10 epochs cuối để ổn định gradient.
+    \end{itemize}
+    \item \textbf{Đóng gói và tổng hợp bộ dữ liệu (Compilation):} Toàn bộ dữ liệu sau xử lý được đóng gói thành bộ dữ liệu giao thông đường bộ hoàn chỉnh gồm 21.272 ảnh và 70.935 nhãn vật thể được phân định ranh giới chuẩn xác.
+\end{enumerate}
+
+Bảng~\ref{tab:image_database_sources} mô tả chi tiết 5 nguồn thành phần tạo nên cơ sở dữ liệu ảnh giao thông đường bộ phục vụ huấn luyện và kiểm thử.
+
+\begin{table}[htbp]
+\centering
+\caption{Chi tiết các nguồn thành phần trong cơ sở dữ liệu ảnh đường bộ và vật cản.}
+\label{tab:image_database_sources}
+\small
+\begin{tabular}{|l|c|c|c|p{5.8cm}|}
+\hline
+\textbf{Nhóm dữ liệu nguồn} & \textbf{Số lượng ảnh} & \textbf{Số lượng nhãn} & \textbf{Kích cỡ ảnh (MP)} & \textbf{Mô tả ngữ cảnh thu nhận} \\ \hline
+Dữ liệu ổ gà và hư hỏng mặt đường & 3.850 & 7.225 (TB: 1,88) & 0,45 -- 2,10 & Ảnh ổ gà, nứt sụt lún trên mặt đường asphalt và bê tông dưới nhiều góc nhìn camera. \\ \hline
+Dữ liệu phương tiện giao thông chính & 8.420 & 23.209 (TB: 2,76) & 1,20 -- 4,15 & Luồng ô tô, xe tải, xe buýt, xe máy trong điều kiện mật độ giao thông đô thị cao. \\ \hline
+Dữ liệu người đi bộ và đối tượng yếu thế & 4.680 & 30.888 (TB: 6,60) & 0,85 -- 2,50 & Người đi bộ, xe đạp, động vật xuất hiện ngẫu nhiên băng qua lòng đường hoặc mép lề. \\ \hline
+Dữ liệu rào chắn và phân làn công trình & 2.870 & 4.951 (TB: 1,73) & 0,50 -- 2,20 & Chóp nón phản quang, cọc tiêu cảnh báo, khối cầu chắn rào tại các khu vực đang sửa đường. \\ \hline
+Dữ liệu vật thể ven đường và biển báo & 1.452 & 4.662 (TB: 3,21) & 0,60 -- 2,00 & Thùng rác, trụ cứu hỏa, biển báo dừng ven vỉa hè dễ gây cản trở tầm nhìn tài xế. \\ \hline
+\textbf{Tổng cộng} & \textbf{21.272} & \textbf{70.935 (TB: 3,33)} & \textbf{0,45 -- 4,15} & \textbf{Bao quát toàn diện các tình huống giao thông thực tế.} \\ \hline
+\end{tabular}
+\end{table}
+
+Mỗi tệp gán nhãn tương ứng với một ảnh được mã hóa dưới dạng bảng văn bản chuẩn, trong đó mỗi hàng đại diện cho một đối tượng với 5 trường thông số hình học được mô tả trong Bảng~\ref{tab:details_of_annotations}.
+
+\begin{table}[htbp]
+\centering
+\caption{Đặc tả cấu trúc các trường thông tin trong tệp gán nhãn (Annotation Format).}
+\label{tab:details_of_annotations}
+\small
+\begin{tabular}{|l|c|p{7.8cm}|}
+\hline
+\textbf{Trường dữ liệu} & \textbf{Miền giá trị / Định dạng} & \textbf{Mô tả ý nghĩa kỹ thuật} \\ \hline
+\texttt{<class\_index>} & Số nguyên $[0, 14]$ & Chỉ số định danh lớp của đối tượng trong không gian 15 danh mục cần nhận diện. \\ \hline
+\texttt{<x\_coordinate>} & Số thực $[0, 1]$ & Tọa độ tâm $x$ của hộp giới hạn, chuẩn hóa theo chiều rộng ảnh (0: mép trái, 1: mép phải). \\ \hline
+\texttt{<y\_coordinate>} & Số thực $[0, 1]$ & Tọa độ tâm $y$ của hộp giới hạn, chuẩn hóa theo chiều cao ảnh (0: mép đỉnh, 1: mép đáy). \\ \hline
+\texttt{<width>} & Số thực $[0, 1]$ & Chiều rộng tương đối của hộp giới hạn so với chiều rộng toàn khung hình. \\ \hline
+\texttt{<height>} & Số thực $[0, 1]$ & Chiều cao tương đối của hộp giới hạn so với chiều cao toàn khung hình. \\ \hline
+\end{tabular}
+\end{table}
+
+Toàn bộ 21.272 ảnh trong cơ sở dữ liệu được phân chia ngẫu nhiên nhưng phân tầng (\textit{Stratified Split}) thành 3 tập dữ liệu độc lập theo tỷ lệ tương ứng xấp xỉ $71,9\% : 16,4\% : 11,7\%$ (tương đương cấu hình $80:15:5$ tiêu chuẩn đối với tập dữ liệu huấn luyện mở rộng), chi tiết thể hiện tại Bảng~\ref{tab:dataset_split_statistics}.
+
+\begin{table}[htbp]
+\centering
+\caption{Phân chia bộ dữ liệu phục vụ huấn luyện, thẩm định và đánh giá kiểm thử.}
+\label{tab:dataset_split_statistics}
+\begin{tabular}{|l|c|c|p{7.2cm}|}
+\hline
+\textbf{Tập dữ liệu (Subset)} & \textbf{Số lượng ảnh} & \textbf{Tỷ lệ (\%)} & \textbf{Mục đích sử dụng trong quy trình} \\ \hline
+Tập huấn luyện (\textit{Training set}) & 15.300 & $71,9\%$ & Cập nhật trọng số mạng nơ-ron thông qua lan truyền ngược gradient. \\ \hline
+Tập xác thực (\textit{Validation set}) & 3.489 & $16,4\%$ & Giám sát hàm mất mát, điều chỉnh siêu tham số và lưu vết trọng số tối ưu nhất (\texttt{best.pt}). \\ \hline
+Tập kiểm thử (\textit{Test set}) & 2.483 & $11,7\%$ & Đánh giá khách quan năng lực tổng quát hóa của mô hình trên dữ liệu chưa từng thấy. \\ \hline
+\textbf{Tổng cộng} & \textbf{21.272} & $\mathbf{100,0\%}$ & \textbf{Đảm bảo tính đại diện và kiểm định khoa học độc lập.} \\ \hline
+\end{tabular}
+\end{table}
+
+Bảng~\ref{tab:class_instances_distribution} cung cấp thống kê phân bố chi tiết số lượng thực thể đối tượng (\textit{instances}) trên toàn bộ 15 lớp danh mục giao thông. 
+
+\begin{table}[htbp]
+\centering
+\caption{Thống kê số lượng thực thể gán nhãn theo 15 danh mục đối tượng trong bộ dữ liệu.}
+\label{tab:class_instances_distribution}
+\small
+\begin{tabular}{|c|l|c|p{7.5cm}|}
+\hline
+\textbf{STT} & \textbf{Tên lớp (Class Name)} & \textbf{Số lượng mẫu (Instances)} & \textbf{Ngữ cảnh nhận diện và phân tích rủi ro} \\ \hline
+1 & \texttt{person} & 26.013 & Người đi bộ, người sang đường, đứng ven vỉa hè (đối tượng rủi ro cao nhất). \\ \hline
+2 & \texttt{car} & 14.100 & Ô tô con, xe du lịch lưu thông trực diện hoặc chuyển làn phía trước. \\ \hline
+3 & \texttt{pothole} & 7.225 & Ổ gà, ổ voi, miệng hố sụt lún nguy hiểm trên bề mặt đường nhựa. \\ \hline
+4 & \texttt{truck} & 5.685 & Xe tải trọng tải vừa và lớn, xe bồn di chuyển trên hành lang giao thông. \\ \hline
+5 & \texttt{bicycle} & 2.706 & Xe đạp, người đi xe đạp thô sơ chuyển động chậm. \\ \hline
+6 & \texttt{dog} & 2.169 & Động vật bất ngờ lao qua đường gây nguy cơ phanh gấp đột ngột. \\ \hline
+7 & \texttt{reflective\_cone} & 2.035 & Chóp nón giao thông phân luồng, khu vực sửa chữa hoặc chướng ngại tạm thời. \\ \hline
+8 & \texttt{motorbike} & 1.880 & Xe máy, xe gắn máy (phương tiện đặc thù chiếm tỷ trọng lớn tại Việt Nam). \\ \hline
+9 & \texttt{warning\_column} & 1.676 & Cọc tiêu cảnh báo phản quang cao mảnh cắm tại dải phân cách hoặc khúc cua. \\ \hline
+10 & \texttt{bus} & 1.544 & Xe buýt công cộng, xe khách vận tải hành khách tuyến cố định. \\ \hline
+11 & \texttt{stop\_sign} & 1.391 & Biển báo dừng hình bát giác đỏ theo quy chuẩn báo hiệu đường bộ. \\ \hline
+12 & \texttt{fire\_hydrant} & 1.271 & Trụ vòi nước cứu hỏa màu đỏ đặt sát mép lề đường đô thị. \\ \hline
+13 & \texttt{spherical\_roadblock} & 1.240 & Cầu chắn bê tông/đá hình cầu lắp đặt ngăn xe máy vào phố đi bộ. \\ \hline
+14 & \texttt{ashcan} & 1.080 & Thùng rác công cộng đặt ven đường, vật cản tĩnh có thể bị xô lệch. \\ \hline
+15 & \texttt{tricycle} & 725 & Xe ba gác, xe xích lô, phương tiện chở hàng tự chế cồng kềnh. \\ \hline
+\textbf{Tổng} & \textbf{15 lớp đối tượng} & \textbf{70.935} & \textbf{Phân bố phong phú, phản ánh đầy đủ thực trạng giao thông đường bộ.} \\ \hline
+\end{tabular}
+\end{table}
+
+Phân tích không gian hộp bao cho thấy hơn $88\%$ tâm của các hộp giới hạn tập trung ở nửa dưới của khung hình ($y > 0,40$), hoàn toàn trùng khớp với góc đặt thị trường của camera hành trình gắn kính lái. Đồng thời, các lớp vật cản nhỏ như \texttt{pothole}, \texttt{warning\_column} và \texttt{reflective\_cone} có diện tích hộp bao chuẩn hóa nhỏ hơn $0,05$ diện tích toàn ảnh, đòi hỏi mạng nơ-ron phải có cơ chế trích xuất và bảo tồn đặc trưng không gian ở độ phân giải cao cực kỳ hiệu quả.
+
+% ------------------------------------------------------------------------------
+\subsection{Kiến Trúc Mô Hình YOLO11n (Network Architecture of YOLO11n)}
+\label{subsec:kien_truc_yolo11n}
+
+Để đáp ứng yêu cầu khắt khe về thời gian suy luận trên phần cứng CPU máy tính thông dụng hoặc thiết bị biên không có GPU rời, nghiên cứu sử dụng kiến trúc **YOLO11n** (\textit{YOLO11 Nano}) – phiên bản nhỏ gọn và tối ưu nhất của dòng YOLO thế hệ thứ 11.
+
+\subsubsection{Cấu trúc phân tầng của mạng YOLO11n}
+Mô hình YOLO11n được thiết kế gồm ba phân hệ chính:
+\begin{enumerate}
+    \item \textbf{Mạng xương sống (Backbone):} 
+    Tiếp nhận ảnh đầu vào $I \in \mathbb{R}^{3 \times 640 \times 640}$, thực hiện trích xuất đặc trưng từ cấp thấp (đường viền, kết cấu mặt đường) đến cấp ngữ nghĩa cao. YOLO11n ứng dụng module \textbf{C3k2} (\textit{Cross Stage Partial with Kernel size flexibility}). Khối C3k2 chia tách bản đồ đặc trưng làm hai nhánh xử lý song song trước khi tái kết hợp, giúp giảm thiểu đáng kể số lượng phép tính dư thừa và tối ưu hóa luồng lan truyền gradient. Tại tầng sâu nhất ($P_5$), khối \textbf{SPPF} (\textit{Spatial Pyramid Pooling - Fast}) áp dụng chuỗi gộp cực đại tuần tự ($5 \times 5, 9 \times 9, 13 \times 13$) nhằm mở rộng trường tiếp nhận (\textit{Receptive Field}) hiệu quả mà không làm biến dạng tỷ lệ không gian, hỗ trợ phát hiện tốt bối cảnh bao quanh ổ gà và vật cản mặt đường.
+    
+    \item \textbf{Mạng cổ (Neck):} 
+    Kết hợp cấu trúc FPN (\textit{Feature Pyramid Network}) và PANet (\textit{Path Aggregation Network}) hai chiều. Nhánh đi xuống truyền thông tin ngữ nghĩa từ tầng sâu xuống tầng nông ($P_5 \to P_4 \to P_3$), trong khi nhánh đi lên truyền thông tin định vị không gian chính xác từ tầng nông ngược lên tầng cao ($N_3 \to N_4 \to N_5$). Sự kết hợp này bảo tồn chi tiết của các vật cản nhỏ (cọc tiêu, chóp nón ở xa) lẫn các vật thể lớn (xe tải, xe buýt).
+
+    \item \textbf{Đầu phát hiện (Decoupled Detection Head):} 
+    Ứng dụng thiết kế đầu phát hiện tách rời không mỏ neo (\textit{Anchor-free Decoupled Head}). Kiến trúc tách độc lập hai nhánh tích chập chuyên biệt cho nhiệm vụ phân loại lớp (\textit{Classification}) và hồi quy tọa độ hộp bao (\textit{Bounding Box Regression}), triệt tiêu xung đột đặc trưng giữa hai tác vụ và loại bỏ bước gán neo thủ công.
+\end{enumerate}
+
+\subsubsection{Cơ chế gán nhãn mục tiêu và hàm mất mát}
+Hệ thống sử dụng cơ chế gán nhãn động \textbf{Task-Aligned Assigner (TAL)} nhằm chọn lọc các mẫu dương (\textit{Positive Anchors}) tối ưu dựa trên chỉ số căn chỉnh động:
+\begin{equation}
+\label{eq:task_aligned_metric}
+t = s^\alpha \times IoU^\beta
+\end{equation}
+trong đó $s$ là điểm số tin cậy dự báo của lớp tương ứng, $IoU$ là độ trùng khớp không gian giữa hộp dự đoán và hộp chân lý (\textit{ground truth}), $\alpha = 0,5$ và $\beta = 6,0$.
+
+Hàm mất mát tổng thể $\mathcal{L}_{\text{total}}$ được biểu diễn bởi:
+\begin{equation}
+\label{eq:total_loss}
+\mathcal{L}_{\text{total}} = \lambda_{\text{cls}} \mathcal{L}_{\text{cls}} + \lambda_{\text{box}} \mathcal{L}_{\text{box}} + \lambda_{\text{dfl}} \mathcal{L}_{\text{dfl}}
+\end{equation}
+trong đó:
+\begin{itemize}
+    \item $\mathcal{L}_{\text{cls}}$ là hàm mất mát phân loại Binary Cross-Entropy (BCE).
+    \item $\mathcal{L}_{\text{box}}$ là hàm mất mát Complete Intersection over Union (CIoU) tính toán toàn diện độ lệch tâm, tỷ lệ co giãn và khoảng cách Euclid giữa hai hộp bao:
+    \begin{equation}
+    \label{eq:ciou_loss}
+    \mathcal{L}_{\text{CIoU}} = 1 - IoU + \frac{\rho^2(b, b^{gt})}{c^2} + \alpha_{\text{ciou}} v
+    \end{equation}
+    với $\rho(\cdot)$ là khoảng cách giữa hai tâm, $c$ là đường chéo của hộp bao nhỏ nhất chứa cả hai hộp, và $v$ là tham số đo lường sự nhất quán về tỷ lệ khung hình.
+    \item $\mathcal{L}_{\text{dfl}}$ là hàm mất mát Distribution Focal Loss (DFL) mô hình hóa tọa độ biên hộp bao dưới dạng hàm phân phối xác suất liên tục trên lưới rời rạc, hỗ trợ định vị chính xác biên dạng mờ của các chướng ngại vật mặt đường.
+\end{itemize}
+
+\subsubsection{Phân tích lý thuyết lựa chọn giải thuật tối ưu hóa (SGDM vs. Adam)}
+Trong bài toán nhận diện vật cản giao thông thực địa, ảnh chụp từ camera hành trình thường chứa nhiều thành phần nhiễu phức tạp như bóng cây rung lắc, mặt đường phản chiếu ánh sáng mạnh và các vết loang dầu dễ bị nhầm với ổ gà. 
+
+Thuật toán tối ưu hóa thích ứng \textbf{Adam} dù có tốc độ giảm hàm mất mát rất nhanh trong những epoch ban đầu nhờ khả năng chia tỷ lệ tốc độ học theo từng tham số độc lập, nhưng thường có xu hướng hội tụ vào các cực tiểu cục bộ lòng chảo hẹp và dốc (\textit{Sharp Minima}). Điều này khiến mô hình biểu hiện hiệu năng rất cao trên tập huấn luyện nhưng lại bị suy giảm độ chính xác rõ rệt khi đối mặt với dữ liệu kiểm thử mới ngoài thực tế.
+
+Ngược lại, thuật toán \textbf{Stochastic Gradient Descent với Động Lượng} (\textbf{SGDM} -- \textit{SGD with Momentum}) duy trì một véc-tơ động lượng tích lũy lịch sử hướng di chuyển gradient theo thời gian:
+\begin{equation}
+\label{eq:sgdm_velocity}
+v_{t} = \gamma v_{t-1} + \eta \nabla_\theta \mathcal{L}(\theta_t)
+\end{equation}
+\begin{equation}
+\label{eq:sgdm_update}
+\theta_{t+1} = \theta_t - v_t
+\end{equation}
+trong đó $\gamma = 0,937$ là hệ số động lượng, $\eta$ là tốc độ học và $\nabla_\theta \mathcal{L}$ là gradient ngẫu nhiên của lô dữ liệu. Véc-tơ động lượng $v_t$ đóng vai trò như một bộ lọc thông thấp làm mịn các dao động gradient có phương sai lớn. Nhờ đó, SGDM có khả năng vượt qua các hố cực tiểu nông, hướng quá trình tối ưu tìm đến các cực tiểu đáy rộng và phẳng (\textit{Flat Minima}), đem lại độ chính xác tổng quát hóa vượt trội trên tập dữ liệu kiểm thử thực tế.
+
+% ------------------------------------------------------------------------------
+\subsection{Cơ Sở Lý Thuyết và Các Chỉ Số Hiệu Năng (Theoretical Foundations and Performance Metrics)}
+\label{subsec:co_so_ly_thuyet_va_chi_so}
+
+Phần này hợp nhất toàn bộ cơ sở lý thuyết, công thức toán học và các chỉ số đo kiểm trong toàn bộ bài báo, chia làm 4 nhóm chức năng:
+
+\subsubsection{Chỉ số đánh giá độ chính xác nhận diện đối tượng}
+Độ trùng khớp không gian giữa hộp bao dự đoán ($B_{\text{pred}}$) và hộp bao thực tế gán nhãn ($B_{\text{gt}}$) được đo lường thông qua chỉ số Giao trên Hợp (\textit{Intersection over Union} -- IoU):
+\begin{equation}
+\label{eq:iou_metric}
+IoU = \frac{\text{Area}(B_{\text{pred}} \cap B_{\text{gt}})}{\text{Area}(B_{\text{pred}} \cup B_{\text{gt}})}
+\end{equation}
+
+Dựa trên ngưỡng chuẩn $\tau_{\text{IoU}} = 0,50$, các dự đoán được phân loại thành:
+\begin{itemize}
+    \item \textbf{True Positive (TP):} Hộp dự đoán có $IoU \ge \tau_{\text{IoU}}$ và khớp đúng mã lớp thực tế.
+    \item \textbf{False Positive (FP):} Hộp dự đoán không có đối tượng tương ứng hoặc $IoU < \tau_{\text{IoU}}$ (báo động giả).
+    \item \textbf{False Negative (FN):} Đối tượng thực tế bị mô hình bỏ sót hoàn toàn (bỏ sót mục tiêu).
+\end{itemize}
+
+Từ ba đại lượng trên, độ chuẩn xác (\textit{Precision} -- $P$), độ phủ hồi quy (\textit{Recall} -- $R$) và điểm số cân bằng điều hòa \textit{F1-score} được xác định bởi:
+\begin{equation}
+\label{eq:precision_metric}
+Precision = \frac{TP}{TP + FP}
+\end{equation}
+\begin{equation}
+\label{eq:recall_metric}
+Recall = \frac{TP}{TP + FN}
+\end{equation}
+\begin{equation}
+\label{eq:f1_metric}
+F1\text{-score} = 2 \times \frac{Precision \times Recall}{Precision + Recall}
+\end{equation}
+
+Độ chính xác trung bình cho một lớp đối tượng thứ $i$ (\textit{Average Precision} -- $AP_i$) là diện tích nằm dưới đường cong tương quan giữa Precision và Recall (PR Curve) ở tất cả các ngưỡng tin cậy:
+\begin{equation}
+\label{eq:ap_metric}
+AP_i = \int_0^1 Precision(r) \, dr
+\end{equation}
+
+Độ chính xác trung bình toàn diện trên tất cả $N = 15$ lớp đối tượng (\textit{mean Average Precision} -- $mAP$) được định nghĩa bởi:
+\begin{equation}
+\label{eq:map_metric}
+mAP = \frac{1}{N} \sum_{i=1}^N AP_i
+\end{equation}
+trong đó:
+\begin{itemize}
+    \item \textbf{mAP@50:} Độ chính xác trung bình tính tại ngưỡng cố định $IoU = 0,50$.
+    \item \textbf{mAP@50--95:} Độ chính xác trung bình tính toán trên 10 ngưỡng $IoU$ biến thiên tịnh tiến từ $0,50$ đến $0,95$ với bước tăng $0,05$:
+    \begin{equation}
+    \label{eq:map5095_metric}
+    mAP@50\text{--}95 = \frac{1}{10} \sum_{k=0}^9 mAP_{@(0,50 + 0,05k)}
+    \end{equation}
+\end{itemize}
+
+\subsubsection{Cơ sở lý thuyết ước lượng khoảng cách và nhịp độ xử lý độ sâu}
+Để khắc phục nút cổ chai tính toán của mô hình ước lượng độ sâu monocular Depth Anything V2 trên CPU ($\tau_{\text{depth}} \approx 120-160\text{ ms}$), phần mềm áp dụng \textbf{Chiến lược Nhịp độ Tách rời (Decoupled Cadence Strategy)}:
+\begin{equation}
+\label{eq:depth_cadence}
+\mathcal{T}_{\text{depth}} = \{ k \in \mathbb{N} \mid k \pmod{N_{\text{depth\_interval}}} = 0 \}
+\end{equation}
+với $N_{\text{depth\_interval}} = 5$. Cứ mỗi 5 khung hình liên tiếp, mô hình độ sâu chỉ thực hiện suy luận thực tế 1 lần tại các khung hình thuộc tập $\mathcal{T}_{\text{depth}}$. 
+
+Tại các khung hình xen kẽ ($k \notin \mathcal{T}_{\text{depth}}$), khoảng cách của đối tượng đang bám vết được tái cấu trúc thông qua thuật toán nội suy tuyến tính (Linear Interpolation) dựa trên lịch sử đo lường gần nhất:
+\begin{equation}
+\label{eq:depth_interp}
+\hat{d}(t) = d(t_1) + \frac{t - t_1}{t_2 - t_1} \cdot \left( d(t_2) - d(t_1) \right)
+\end{equation}
+trong đó $t_1, t_2$ là các mốc thời gian của hai lần đo độ sâu thực gần nhất. Nhằm ngăn chặn hiện tượng sai số độ sâu monocular cục bộ tạo ra tốc độ tiếp cận dốc ảo, hệ thống áp dụng điều kiện ràng buộc tốc độ nội suy tối đa $v_{\max\_interp} = 12,0\text{ m/s}$:
+\begin{equation}
+\label{eq:depth_clamp}
+\left| \frac{\hat{d}(t) - d(t_1)}{t - t_1} \right| \le v_{\max\_interp}
+\end{equation}
+Nếu độ dốc vượt quá ngưỡng này, hệ thống sẽ tự động chuyển sang chế độ bảo lưu giá trị đo gần nhất (Hold Mode).
+
+Khoảng cách vật lý giữa xe chủ và đối tượng nguy hiểm được làm mượt qua bộ lọc trung bình động hàm mũ (Exponential Moving Average -- EMA) với hệ số $\alpha = 0,3$:
+\begin{equation}
+\label{eq:ema_distance}
+\bar{d}_k = \alpha \cdot d_k + (1 - \alpha) \cdot \bar{d}_{k-1}
+\end{equation}
+
+\subsubsection{Động học đánh giá rủi ro và phân cấp cảnh báo va chạm}
+Tốc độ tiếp cận tương đối ($v_{\text{closing}}$) được tính toán dựa trên đạo hàm khoảng cách theo thời gian kết hợp hiệu chỉnh vận tốc xe chủ ($v_{\text{ego}}$ trích xuất từ Sparse Optical Flow):
+\begin{equation}
+\label{eq:closing_speed}
+v_{\text{closing}} = -\frac{\Delta \bar{d}}{\Delta t} - v_{\text{ego}}
+\end{equation}
+
+Chỉ số Thời gian chạm trán (Time-To-Collision -- TTC) được xác định bởi:
+\begin{equation}
+\label{eq:ttc_metric}
+TTC = \begin{cases}
+\dfrac{\bar{d}}{v_{\text{closing}}}, & \text{khi } v_{\text{closing}} > 0 \\
++\infty, & \text{khi } v_{\text{closing}} \le 0
+\end{cases}
+\end{equation}
+
+Nhằm xử lý trường hợp vật cản tĩnh (ổ gà, xe dừng phía trước) khi $v_{\text{closing}} \to 0 \implies TTC \to \infty$, phần mềm áp dụng logic phân cấp cảnh báo lai (Hybrid Risk Logic) kết hợp giữa $TTC$ động và khoảng cách tĩnh $d$:
+\begin{equation}
+\label{eq:hybrid_risk}
+\mathcal{L}_{\text{raw}} = \begin{cases}
+\texttt{DANGER}, & \text{nếu } (TTC \le 2,0\text{ s}) \lor (\bar{d} \le 3,5\text{ m}) \\
+\texttt{WARNING}, & \text{nếu } (2,0\text{ s} < TTC \le 4,0\text{ s}) \lor (3,5\text{ m} < \bar{d} \le 8,0\text{ m}) \\
+\texttt{NORMAL}, & \text{ngược lại}
+\end{cases}
+\end{equation}
+
+Để loại trừ báo động giả do rung lắc camera và mấp mô mặt đường, mức cảnh báo chỉ được chính thức kích hoạt nếu duy trì liên tục qua $K_{\text{confirm}} = 3$ khung hình:
+\begin{equation}
+\label{eq:confirm_frames}
+\mathcal{L}_{\text{final}}(t) = \mathcal{L}_{\text{target}} \iff \forall i \in \{0, 1, \dots, K_{\text{confirm}} - 1\}, \, \mathcal{L}_{\text{raw}}(t - i) = \mathcal{L}_{\text{target}}
+\end{equation}
+
+\subsubsection{Các chỉ số đo kiểm thời gian thực của phần mềm}
+\begin{itemize}
+    \item \textbf{Tốc độ khung hình cửa sổ trượt (Sliding-Window FPS):} Đo lường độ mượt thực tế qua cửa sổ trượt $W = 30$ khung hình:
+    \begin{equation}
+    \label{eq:sliding_fps}
+    FPS_{\text{sliding}} = \frac{W - 1}{t_{\text{newest}} - t_{\text{oldest}}}
+    \end{equation}
+    \item \textbf{Độ trễ phân vị ($P_{50}$ và $P_{95}$):} Đo lường thời gian trễ trung vị ($P_{50}$) và thời gian trễ trong trường hợp xấu nhất ($P_{95}$ -- Worst-Case Latency), phản ánh độ ổn định giật khung hình (\textit{frame jitter}).
+    \item \textbf{Tỷ lệ phát hiện cảnh báo kịp thời (Early Warning Success Rate -- EWSR):}
+    \begin{equation}
+    \label{eq:ewsr_metric}
+    EWSR = \frac{N_{\text{timely}}}{N_{\text{critical}}} \times 100\%
+    \end{equation}
+    với $N_{\text{timely}}$ là số sự kiện nguy hiểm mà hệ thống phát tín hiệu cảnh báo trước thời điểm va chạm ít nhất $1,5$ giây.
+\end{itemize}

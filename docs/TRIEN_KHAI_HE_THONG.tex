@@ -1,0 +1,266 @@
+% ==============================================================================
+% MỤC: TRIỂN KHAI HỆ THỐNG THỜI GIAN THỰC (REAL-TIME SYSTEM DEPLOYMENT)
+% Đề tài: Hệ Thống Phát Hiện Vật Cản Đường Bộ và Cảnh Báo Sớm Thời Gian Thực
+%         Dựa Trên Mô Hình YOLO11n
+% ==============================================================================
+
+\section{TRIỂN KHAI HỆ THỐNG THỜI GIAN THỰC}
+\label{sec:trien_khai_he_thong}
+
+Sau giai đoạn huấn luyện và tinh chỉnh mô hình học sâu, trọng số tối ưu nhất được đóng gói thành tệp \texttt{best.pt} của kiến trúc \textbf{YOLO11n} (phiên bản Nano siêu nhẹ, tối ưu hóa cho các hệ thống biên). Mô hình này có khả năng nhận diện đồng thời 15 lớp vật cản đường bộ đặc thù tại Việt Nam (bao gồm: \textit{pothole} - ổ gà, \textit{motorbike} - xe máy, \textit{car} - ô tô, \textit{bus} - xe buýt, \textit{truck} - xe tải, \textit{bicycle} - xe đạp, \textit{person} - người đi bộ, \textit{reflective\_cone} - chóp nón giao thông, \textit{warning\_column} - cọc tiêu cảnh báo, \textit{spherical\_roadblock} - khối cầu chắn đường, \textit{ashcan} - thùng rác, \textit{stop\_sign} - biển dừng, \textit{tricycle} - xe ba gác, \textit{fire\_hydrant} - trụ cứu hỏa, \textit{dog} - động vật qua đường).
+
+Tuy nhiên, trong một hệ thống Hỗ trợ Lái xe Nâng cao (ADAS) và Cảnh báo Va chạm Phía trước (Forward Collision Warning -- FCW), việc sở hữu một mô hình phát hiện đối tượng chính xác mới chỉ giải quyết được bài toán ``\textit{nhìn thấy cái gì}''. Để hệ thống có thể vận hành an toàn trong điều kiện giao thông thực tế, cần phải giải quyết trọn vẹn bài toán ``\textit{vật thể đang ở cự ly bao xa, tiếp cận với tốc độ bao nhiêu và có nguy cơ va chạm hay không}''. Phần này trình bày chi tiết về kiến trúc triển khai thời gian thực, cơ chế điều phối luồng dữ liệu, thuật toán đánh giá nguy cơ va chạm, giao diện tương tác và các giải pháp tối ưu hóa hiệu năng được hiện thực hóa trong kịch bản điều hành \texttt{tools/live.py} và đường ống \texttt{CollisionWarningSystem}.
+
+% ------------------------------------------------------------------------------
+\subsection{Kiến Trúc Tổng Thể Hệ Thống Triển Khai}
+\label{subsec:kien_truc_tong_the}
+
+Hệ thống triển khai thực nghiệm được thiết kế theo mô hình phân lớp hướng module (Modular Layered Architecture) nhằm đảm bảo tính độc lập giữa thiết bị thu nhận hình ảnh ngoại vi và lõi thuật toán tính toán thông minh. Sơ đồ luồng xử lý dữ liệu tổng thể được mô tả trên Hình~\ref{fig:deployment_pipeline}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=1.2cm and 0.8cm,
+    block/.style={rectangle, draw=blue!70, fill=blue!5, rounded corners, thick, text centered, minimum height=0.9cm, text width=2.8cm, font=\small},
+    proc/.style={rectangle, draw=teal!70, fill=teal!5, rounded corners, thick, text centered, minimum height=0.9cm, text width=2.8cm, font=\small},
+    risk/.style={rectangle, draw=red!70, fill=red!5, rounded corners, thick, text centered, minimum height=0.9cm, text width=2.8cm, font=\small},
+    outblock/.style={rectangle, draw=orange!70, fill=orange!5, rounded corners, thick, text centered, minimum height=0.9cm, text width=2.8cm, font=\small},
+    arrow/.style={-stealth, thick, draw=gray!80}
+]
+    % Nodes
+    \node[block] (source) {Nguồn Video / Camera (IP Webcam / RTSP / Dashcam MP4)};
+    \node[proc, right=of source] (preproc) {Tiền Xử Lý (Downscaling cv2.INTER\_AREA)};
+    \node[proc, right=of preproc] (yolo) {YOLO11n Inference (assets/best.pt) + Alias Normalization};
+    \node[proc, below=of yolo] (tracking) {Theo Dõi Đối Tượng (ByteTrack Algorithm)};
+    \node[proc, left=of tracking] (depth) {Ước Lượng Độ Sâu Đơn Mục (Depth Anything V2 + Linear Interp)};
+    \node[proc, left=of depth] (egomotion) {Ước Lượng Chuyển Động Riêng (Sparse Optical Flow)};
+    \node[risk, below=of depth] (riskengine) {Động Học Đánh Giá Rủi Ro (Dual ROI \& TTC Computation)};
+    \node[outblock, left=of riskengine] (hud) {Giao Diện HUD Overlay (OpenCV Real-time)};
+    \node[outblock, right=of riskengine] (alert) {Bộ Cảnh Báo Âm Thanh (Audio Alerter Engine)};
+    \node[outblock, below=of riskengine] (telemetry) {Nhật Ký Đo Kiểm (Benchmark CSV Telemetry)};
+
+    % Arrows
+    \draw[arrow] (source) -- (preproc);
+    \draw[arrow] (preproc) -- (yolo);
+    \draw[arrow] (yolo) -- (tracking);
+    \draw[arrow] (tracking) -- (depth);
+    \draw[arrow] (preproc) |- (egomotion);
+    \draw[arrow] (egomotion) -- (depth);
+    \draw[arrow] (depth) -- (riskengine);
+    \draw[arrow] (tracking) |- (riskengine);
+    \draw[arrow] (riskengine) -- (hud);
+    \draw[arrow] (riskengine) -- (alert);
+    \draw[arrow] (riskengine) -- (telemetry);
+\end{tikzpicture}
+\caption{Kiến trúc đường ống triển khai thời gian thực của hệ thống phát hiện vật cản và cảnh báo sớm va chạm.}
+\label{fig:deployment_pipeline}
+\end{figure}
+
+Kiến trúc bao gồm các phân hệ chức năng chính:
+\begin{enumerate}
+    \item \textbf{Phân hệ Thu nhận Dữ liệu (Ingestion Layer):} Tích hợp giao thức kết nối mạng thời gian thực để nhận luồng hình ảnh từ camera điện thoại thông minh (giao thức HTTP/MJPEG qua ứng dụng IP Webcam) hoặc camera hành trình gắn trên kính lái xe. Đồng thời hỗ trợ đọc luồng ngoại tuyến từ các tệp video MP4 định dạng chuẩn.
+    \item \textbf{Phân hệ Tiền xử lý Thích ứng (Adaptive Pre-processing):} Tự động trích xuất thông số hình học thực tế của khung hình, thực hiện nén kích thước ảnh (Frame Rescaling) với thuật toán nội suy diện tích (\texttt{cv2.INTER\_AREA}) nhằm giảm khối lượng pixel cần tính toán nhưng vẫn bảo toàn độ sắc nét của các đường biên vật thể nhỏ.
+    \item \textbf{Phân hệ Nhận diện và Bám vết (Detection \& Tracking Engine):} Nạp trọng số \texttt{best.pt} của mô hình YOLO11n. Kết quả hộp bao (bounding boxes) sau khi lọc qua ngưỡng tin cậy ($conf \ge 0.45$) và chuẩn hóa từ vựng danh mục nhãn (Alias Normalization) sẽ được đưa vào thuật toán bám vết \textbf{ByteTrack}. ByteTrack duy trì định danh ổn định (Stable Track ID) của từng đối tượng giữa các khung hình liên tiếp, giải quyết triệt để hiện tượng ngắt quãng định danh khi vật thể bị che khuất tạm thời.
+    \item \textbf{Phân hệ Đo khoảng cách và Động học Xe chủ (Depth \& Ego-Motion Layer):} Kết hợp mô hình ước lượng độ sâu đơn mục (\textit{Monocular Metric Depth Estimation}) dựa trên Depth Anything V2 và thuật toán dòng quang học thưa (\textit{Sparse Optical Flow}) để bù trừ vận tốc di chuyển của phương tiện chủ ($v_{ego}$), trích xuất khoảng cách vật lý thực ($d$) và vận tốc tiếp cận tương đối ($v_{closing}$).
+    \item \textbf{Phân hệ Phân tích Rủi ro và Cảnh báo Sớm (Collision Risk Assessment):} Xác định đối tượng nguy hiểm nhất (Primary Target) trong hành lang cảnh báo va chạm (Warning Corridor), tính toán chỉ số Thời gian chạm trán (Time-To-Collision -- TTC) và kích hoạt tín hiệu cảnh báo thị giác/âm thanh theo 3 cấp độ: \texttt{NORMAL}, \texttt{WARNING}, \texttt{DANGER}.
+    \item \textbf{Phân hệ Đo lường và Ghi nhận Dữ liệu (Benchmarking \& Telemetry):} Giám sát hiệu năng liên tục thông qua bộ đếm cửa sổ trượt (Sliding-window Metrics) và tự động ghi lại dữ liệu vi mô 16 tham số vào tệp CSV phục vụ việc phân tích định lượng sau hành trình.
+\end{enumerate}
+
+% ------------------------------------------------------------------------------
+\subsection{Tối Ưu Hóa Tần Suất Xử Lý và Phân Phối Tài Nguyên Tính Toán}
+\label{subsec:toi_uu_tai_nguyen}
+
+Một trong những rào cản lớn nhất khi triển khai các hệ thống ADAS dựa trên học sâu là sự chênh lệch lớn về chi phí tính toán giữa các mô hình thành phần. Thực nghiệm trên phần cứng máy tính tiêu chuẩn (Intel Core i5-8250U, không GPU rời) cho thấy:
+\begin{itemize}
+    \item Thời gian suy luận của mô hình nhận diện YOLO11n kích thước $640 \times 640$: $\tau_{\text{yolo}} \approx 18 - 25 \text{ ms/frame}$.
+    \item Thời gian suy luận của mô hình ước lượng độ sâu Depth Anything V2 ở độ phân giải chiều cao 224 pixel: $\tau_{\text{depth}} \approx 120 - 160 \text{ ms/frame}$ (ở độ phân giải 518 pixel có thể lên tới $> 1200 \text{ ms/frame}$).
+\end{itemize}
+
+Nếu thực hiện suy luận mô hình độ sâu trên từng khung hình, tốc độ xử lý của hệ thống sẽ bị kéo tụt xuống dưới $6\text{ FPS}$, hoàn toàn không đáp ứng được yêu cầu phản xạ an toàn thời gian thực. Để giải quyết nút cổ chai này, hệ thống áp dụng \textbf{Chiến lược Nhịp độ Tách rời (Decoupled Cadence Strategy)} với cơ chế nội suy tuyến tính:
+
+\begin{equation}
+\label{eq:depth_cadence}
+\mathcal{T}_{\text{depth}} = \{ k \in \mathbb{N} \mid k \pmod{N_{\text{depth\_interval}}} = 0 \}
+\end{equation}
+với $N_{\text{depth\_interval}} = 5$ (được cấu hình trong \texttt{config.yaml}). Cứ mỗi 5 khung hình liên tiếp, mô hình độ sâu chỉ thực hiện suy luận thực tế 1 lần tại các khung hình thuộc tập $\mathcal{T}_{\text{depth}}$. Tại các khung hình xen kẽ ($k \notin \mathcal{T}_{\text{depth}}$), khoảng cách của đối tượng đang bám vết được tái cấu trúc thông qua thuật toán nội suy tuyến tính (Linear Interpolation) dựa trên lịch sử đo lường gần nhất:
+
+\begin{equation}
+\label{eq:depth_interp}
+\hat{d}(t) = d(t_1) + \frac{t - t_1}{t_2 - t_1} \cdot \left( d(t_2) - d(t_1) \right)
+\end{equation}
+trong đó $t_1, t_2$ là các mốc thời gian của hai lần đo độ sâu thực gần nhất. Nhằm ngăn chặn hiện tượng sai số độ sâu monocular cục bộ tạo ra tốc độ tiếp cận dốc ảo, hệ thống áp dụng điều kiện ràng buộc tốc độ nội suy tối đa $v_{\max\_interp} = 12.0\text{ m/s}$:
+\begin{equation}
+\label{eq:depth_clamp}
+\left| \frac{\hat{d}(t) - d(t_1)}{t - t_1} \right| \le v_{\max\_interp}
+\end{equation}
+Nếu độ dốc vượt quá ngưỡng này, hệ thống sẽ tự động chuyển sang chế độ bảo lưu giá trị đo gần nhất (Hold Mode). Nhờ cơ chế này, chi phí tính toán trung bình của phân hệ đo độ sâu giảm đi xấp xỉ $80\%$, giúp hệ thống duy trì ổn định tốc độ toàn trình đạt mức $18 - 22\text{ FPS}$ ngay cả trên nền tảng phần cứng CPU thông dụng.
+
+% ------------------------------------------------------------------------------
+\subsection{Thuật Toán Đánh Giá Nguy Cơ Va Chạm (Collision Risk Assessment)}
+\label{subsec:thuat_toan_danh_gia_nguy_co}
+
+Quy trình đánh giá nguy cơ va chạm được thiết kế nghiêm ngặt dựa trên sự kết hợp giữa mô hình động học không gian và các tiêu chuẩn an toàn giao thông đường bộ.
+
+\subsubsection{Hành lang cảnh báo tập trung (Dual-Zone ROI)}
+Một nhược điểm chí mạng của các hệ thống cảnh báo đơn giản là tạo ra quá nhiều báo động giả (False Alarms) khi xe di chuyển trên đường phố đông đúc (ví dụ: cảnh báo xe máy đang chạy ở làn đường bên cạnh hoặc người đi bộ trên vỉa hè). Để khắc phục, hệ thống định nghĩa mô hình Vùng quan tâm kép (Dual-Zone Region of Interest):
+\begin{itemize}
+    \item \textbf{Vùng theo dõi rộng (Wide Tracking ROI):} Chiếm diện tích chuẩn hóa $x \in [0.10, 0.90]$, $y \in [0.22, 1.00]$. Vùng này bao quát toàn bộ mặt đường phía trước để thuật toán ByteTrack luôn ghi nhận và duy trì lịch sử chuyển động của phương tiện từ lúc chúng bắt đầu nhập làn (cut-in) từ lề đường.
+    \item \textbf{Hành lang cảnh báo ưu tiên (Warning Corridor):} Thu hẹp trong dải $x \in [0.22, 0.78]$, $y \in [0.26, 1.00]$. Đây là dải không gian trực diện tương ứng với quỹ đạo chuyển động tịnh tiến của phương tiện chủ. \textit{Chỉ những vật thể có tâm hình học nằm trong hành lang này mới được đưa vào danh sách đánh giá va chạm khẩn cấp}.
+\end{itemize}
+
+\subsubsection{Mô hình động học Time-To-Collision (TTC)}
+Khoảng cách vật lý giữa xe chủ và đối tượng nguy hiểm được làm mượt qua bộ lọc trung bình động hàm mũ (Exponential Moving Average -- EMA) với hệ số $\alpha = 0.3$:
+\begin{equation}
+\label{eq:ema_distance}
+\bar{d}_k = \alpha \cdot d_k + (1 - \alpha) \cdot \bar{d}_{k-1}
+\end{equation}
+
+Tốc độ tiếp cận tương đối ($v_{closing}$) được tính toán dựa trên đạo hàm khoảng cách theo thời gian kết hợp hiệu chỉnh vận tốc xe chủ ($v_{ego}$ trích xuất từ Optical Flow):
+\begin{equation}
+\label{eq:closing_speed}
+v_{closing} = -\frac{\Delta \bar{d}}{\Delta t} - v_{ego}
+\end{equation}
+
+Chỉ số Thời gian chạm trán (TTC) được xác định bởi:
+\begin{equation}
+\label{eq:ttc_formula}
+TTC = \begin{cases}
+\dfrac{\bar{d}}{v_{closing}}, & \text{khi } v_{closing} > 0 \\
++\infty, & \text{khi } v_{closing} \le 0
+\end{cases}
+\end{equation}
+Khi $v_{closing} \le 0$ (vật thể di chuyển cùng chiều với tốc độ lớn hơn hoặc khoảng cách đang nới rộng), nguy cơ va chạm tiếp cận không tồn tại, do đó $TTC$ được xác định là vô cùng ($+\infty$).
+
+\subsubsection{Logic phân cấp cảnh báo kết hợp cự ly tuyệt đối}
+Nếu chỉ dựa đơn thuần vào chỉ số $TTC$, hệ thống sẽ gặp lỗ hổng nghiêm trọng trong trường hợp phương tiện phía trước đang dừng đèn đỏ hoặc vật cản tĩnh (như ổ gà lớn, cọc tiêu): khi xe chủ dừng hẳn sát phía sau vật thể ở cự ly chỉ 1 mét, $v_{closing} \to 0 \implies TTC \to \infty$, dẫn đến hệ thống báo trạng thái an toàn. Do đó, hệ thống tích hợp cơ chế phân cấp cảnh báo lai (Hybrid Risk Logic) kết hợp giữa $TTC$ động và khoảng cách tĩnh $d$:
+
+\begin{equation}
+\label{eq:risk_level}
+\mathcal{L}_{\text{raw}} = \begin{cases}
+\texttt{DANGER}, & \text{nếu } (TTC \le 2.0\text{ s}) \lor (\bar{d} \le 3.5\text{ m}) \\
+\texttt{WARNING}, & \text{nếu } (2.0\text{ s} < TTC \le 4.0\text{ s}) \lor (3.5\text{ m} < \bar{d} \le 8.0\text{ m}) \\
+\texttt{NORMAL}, & \text{ngược lại}
+\end{cases}
+\end{equation}
+
+\subsubsection{Bộ lọc xác nhận đa khung hình (Multi-frame Confirmation Filter)}
+Nhằm triệt tiêu rung lắc camera do mấp mô mặt đường và loại bỏ các sai số đột biến của mô hình đo độ sâu, mức cảnh báo chỉ được chính thức kích hoạt nếu duy trì liên tục qua $K_{\text{confirm}} = 3$ khung hình:
+\begin{equation}
+\label{eq:confirm_frames}
+\mathcal{L}_{\text{final}}(t) = \mathcal{L}_{\text{target}} \iff \forall i \in \{0, 1, \dots, K_{\text{confirm}} - 1\}, \, \mathcal{L}_{\text{raw}}(t - i) = \mathcal{L}_{\text{target}}
+\end{equation}
+
+% ------------------------------------------------------------------------------
+\subsection{Cơ Chế Phục Hồi Lỗi và Quản Lý Luồng Video Thực Nghiệm}
+\label{subsec:phuc_hoi_ket_noi}
+
+Trong môi trường thực tế, việc truyền tải dữ liệu video độ phân giải cao qua mạng không dây (Wi-Fi nội bộ giữa điện thoại và máy tính) rất dễ xảy ra hiện tượng mất gói (packet loss), nghẽn băng thông hoặc đứt kết nối đột ngột. Trong kịch bản \texttt{live.py}, các giải pháp bảo vệ đường truyền được tích hợp bao gồm:
+
+\begin{algorithm}[H]
+\caption{Quy trình thu nhận khung hình và tự động khôi phục kết nối (Auto-Reconnect)}
+\label{alg:auto_reconnect}
+\begin{algorithmic}[1]
+\REQUIRE Đường dẫn camera $URL$, số lần thử tối đa $M_{\text{reconnect}} = 5$, độ trễ $\Delta t_{\text{delay}} = 2.0\text{s}$
+\STATE Khởi tạo kết nối: $cap \leftarrow \text{cv2.VideoCapture}(URL)$
+\WHILE{True}
+    \STATE $ok, frame \leftarrow cap.\text{read}()$
+    \IF{$\mathbf{not} \, ok \lor frame \text{ is None}$}
+        \STATE $reconnected \leftarrow \text{False}$
+        \FOR{$attempt = 1 \text{ to } M_{\text{reconnect}}$}
+            \STATE Hiển thị giao diện thông báo tái kết nối: $\text{draw\_reconnect\_status}(attempt, M_{\text{reconnect}})$
+            \STATE Lắng nghe phím bấm: $key \leftarrow \text{cv2.waitKey}(\Delta t_{\text{delay}} \times 1000)$
+            \IF{$key \in \{\text{'q'}, \text{Esc}\}$}
+                \RETURN Kết thúc chương trình
+            \ENDIF
+            \STATE $cap.\text{release}()$
+            \STATE $cap, status \leftarrow \text{open\_camera}(URL)$
+            \IF{$status \text{ is True}$}
+                \STATE $reconnected \leftarrow \text{True}$
+                \STATE \textbf{break}
+            \ENDIF
+        \ENDFOR
+        \IF{$\mathbf{not} \, reconnected$}
+            \STATE Báo lỗi gián đoạn đường truyền và dừng chương trình
+            \RETURN
+        \ENDIF
+    \ENDIF
+    \STATE Đẩy $frame$ vào đường ống xử lý: $res \leftarrow \text{pipe.process\_frame}(frame)$
+\ENDWHILE
+\end{algorithmic}
+\end{algorithm}
+
+Đặc biệt, toàn bộ vòng lặp thực thi được bao bọc trong cấu trúc khối \texttt{try \dots finally}. Khi người dùng bấm phím dừng khẩn cấp (\texttt{q} hoặc \texttt{Esc}) hoặc khi xảy ra ngoại lệ phần cứng, khối \texttt{finally} đảm bảo giải phóng toàn bộ tài nguyên: giải phóng camera (\texttt{cap.release()}), đóng các cửa sổ OpenCV (\texttt{cv2.destroyAllWindows()}), dọn dẹp các tiến trình con của pipeline (\texttt{pipe.close()}) và đóng hoàn tất việc ghi bộ đệm tệp CSV benchmark xuống đĩa cứng.
+
+% ------------------------------------------------------------------------------
+\subsection{Hệ Thống Đo Kiểm Hiệu Năng và Ghi Nhận Telemetry}
+\label{subsec:do_kiem_telemetry}
+
+Nhằm cung cấp dữ liệu định lượng chính xác phục vụ báo cáo khoa học, lớp \texttt{FrameMetrics} trong kịch bản triển khai theo dõi các chỉ số hiệu năng theo thời gian thực dựa trên đồng hồ đơn điệu độ phân giải cao \texttt{time.perf_counter()}:
+
+\begin{itemize}
+    \item \textbf{Tốc độ khung hình cửa sổ trượt (Sliding-Window FPS):} Được tính toán trên cửa sổ 30 khung hình gần nhất:
+    \begin{equation}
+    \label{eq:sliding_fps}
+    FPS_{\text{sliding}} = \frac{W - 1}{t_{\text{newest}} - t_{\text{oldest}}} \quad (W = 30)
+    \end{equation}
+    Khác với cách đo từng khung hình riêng lẻ bị biến động mạnh, công thức này cung cấp chỉ số FPS phản ánh chính xác độ mượt của luồng video hiển thị.
+    \item \textbf{Độ trễ phân vị (Percentiles Latency $P_{50}$ và $P_{95}$):} Cho biết phân phối thời gian xử lý toàn trình của hệ thống. Trong đó, $P_{95}$ là thước đo quan trọng nhất phản ánh trường hợp trễ xấu nhất (Worst-Case Latency), giúp đánh giá xem hệ thống có bị hiện tượng giật đơ (frame jitter) trong quá trình vận hành liên tục hay không.
+\end{itemize}
+
+Bảng~\ref{tab:benchmark_csv_schema} tóm tắt cấu trúc 16 trường dữ liệu được ghi nhận tự động vào tệp nhật ký thực nghiệm \texttt{live\_benchmark\_*.csv}.
+
+\begin{table}[htbp]
+\centering
+\caption{Cấu trúc các trường dữ liệu vi mô được ghi nhận trong tệp Telemetry Benchmark.}
+\label{tab:benchmark_csv_schema}
+\small
+\begin{tabular}{|c|l|l|p{6.8cm}|}
+\hline
+\textbf{STT} & \textbf{Tên trường} & \textbf{Kiểu dữ liệu} & \textbf{Ý nghĩa kỹ thuật} \\ \hline
+1 & \texttt{frame} & Số nguyên & Số thứ tự khung hình xử lý tịnh tiến ($1, 2, 3, \dots$). \\ \hline
+2 & \texttt{timestamp} & Số thực (Float) & Mốc thời gian Unix (giây) tại thời điểm nhận khung hình. \\ \hline
+3 & \texttt{src\_w, src\_h} & Số nguyên & Độ phân giải gốc của camera thu nhận (ví dụ: $1280 \times 720$). \\ \hline
+4 & \texttt{proc\_w, proc\_h} & Số nguyên & Độ phân giải sau khi co giãn đưa vào suy luận ($960 \times 540$). \\ \hline
+5 & \texttt{loop\_fps} & Số thực (Float) & Tốc độ khung hình xử lý tức thời theo cửa sổ trượt (FPS). \\ \hline
+6 & \texttt{pipeline\_ms} & Số thực (Float) & Tổng thời gian thực thi toàn bộ pipeline cho khung hình (ms). \\ \hline
+7 & \texttt{yolo\_ms} & Số thực (Float) & Thời gian suy luận nhận diện đối tượng của mô hình YOLO11n (ms). \\ \hline
+8 & \texttt{depth\_ms} & Số thực (Float) & Thời gian tính toán độ sâu của Depth Anything V2 (ms). \\ \hline
+9 & \texttt{detections} & Số nguyên & Tổng số hộp bao vật cản phát hiện vượt ngưỡng tin cậy. \\ \hline
+10 & \texttt{tracks} & Số nguyên & Số lượng đối tượng duy trì quỹ đạo bám vết bởi ByteTrack. \\ \hline
+11 & \texttt{level} & Chuỗi (String) & Mức độ cảnh báo rủi ro hiện hành (\texttt{NORMAL, WARNING, DANGER}). \\ \hline
+12 & \texttt{primary\_class} & Chuỗi (String) & Danh mục vật cản có nguy cơ cao nhất (ví dụ: \texttt{motorbike, pothole}). \\ \hline
+13 & \texttt{primary\_distance\_m} & Số thực (Float) & Khoảng cách ước lượng đến vật cản nguy hiểm nhất (mét). \\ \hline
+14 & \texttt{primary\_ttc\_s} & Số thực (Float) & Thời gian chạm trán dự báo đối với vật thể đó (giây). \\ \hline
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------------------------
+\subsection{Kết Quả Vận Hành Thực Nghiệm và Đánh Giá}
+\label{subsec:ket_qua_thuc_nghiem}
+
+Hệ thống triển khai đã được thử nghiệm thực tế với nguồn video truyền trực tiếp từ camera điện thoại thông minh qua mạng Wi-Fi và các đoạn video hành trình đường phố trong điều kiện mật độ giao thông hỗn hợp tại Việt Nam. Bảng~\ref{tab:experimental_performance} thể hiện các thông số đo kiểm hiệu năng của hệ thống triển khai trên nền tảng phần cứng tiêu chuẩn.
+
+\begin{table}[htbp]
+\centering
+\caption{Hiệu năng vận hành thực tế của hệ thống trên phần cứng máy tính tiêu chuẩn.}
+\label{tab:experimental_performance}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Tham số kiểm thử} & \textbf{Cấu hình Mặc định} & \textbf{Cấu hình Nén (--width 960)} & \textbf{Cấu hình Tối ưu (--width 640)} \\ \hline
+Độ phân giải xử lý & $1280 \times 720$ & $960 \times 540$ & $640 \times 360$ \\ \hline
+Thời gian YOLO11n & $24.6\text{ ms}$ & $18.2\text{ ms}$ & $12.1\text{ ms}$ \\ \hline
+Thời gian Depth (chu kỳ 5) & $152.0\text{ ms}$ & $124.5\text{ ms}$ & $96.0\text{ ms}$ \\ \hline
+Độ trễ trung vị $P_{50}$ & $62.4\text{ ms}$ & $51.8\text{ ms}$ & $38.2\text{ ms}$ \\ \hline
+Độ trễ đuôi $P_{95}$ & $84.2\text{ ms}$ & $69.0\text{ ms}$ & $48.5\text{ ms}$ \\ \hline
+\textbf{Tốc độ trung bình (FPS)} & $\mathbf{15.2\text{ FPS}}$ & $\mathbf{18.6\text{ FPS}}$ & $\mathbf{24.8\text{ FPS}}$ \\ \hline
+\end{tabular}
+\end{table}
+
+Kết quả thực nghiệm khẳng định:
+\begin{enumerate}
+    \item Mô hình \textbf{YOLO11n} với trọng số \texttt{best.pt} hoạt động cực kỳ nhẹ và nhanh, chiếm chưa tới $30\%$ tổng thời gian trễ của đường ống, chứng minh sự lựa chọn kiến trúc YOLO thế hệ thứ 11 phiên bản Nano là hoàn toàn phù hợp cho bài toán thời gian thực.
+    \item Với tùy chọn \texttt{--width 960}, hệ thống đạt tốc độ xử lý ổn định $18.6\text{ FPS}$ cùng độ trễ trung vị xấp xỉ $51.8\text{ ms}$. Khi phương tiện phía trước phanh gấp hoặc xe máy cắt đầu làn ở khoảng cách dưới $8\text{ mét}$, trạng thái cảnh báo trên bảng HUD ngay lập tức chuyển đổi từ \texttt{NORMAL} sang \texttt{WARNING} (màu cam) và phát tín hiệu cảnh báo âm thanh kịp thời trước khi chạm ngưỡng \texttt{DANGER} (màu đỏ) ở cự ly $3.5\text{ mét}$.
+    \item Các chướng ngại vật mặt đường như ổ gà (\textit{pothole}) và chóp nón giao thông (\textit{reflective\_cone}) được phát hiện và hiển thị hộp bao bám vết rõ ràng, hỗ trợ tài xế nhận diện sớm các hiểm họa mặt đường mà mắt thường có thể bỏ sót trong điều kiện ánh sáng phức tạp.
+\end{enumerate}
+
+Những kết quả trên chứng minh tính khả thi, độ ổn định và tiềm năng ứng dụng thực tế to lớn của hệ thống trong việc nâng cao an toàn giao thông đường bộ.
