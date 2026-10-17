@@ -64,8 +64,8 @@ def build_parser():
         help="Camera stream URL (e.g. http://192.168.1.42:8080/video) or path to a video file.",
     )
     p.add_argument(
-        "--width", type=int, default=0,
-        help="Target output width in pixels. Height scales proportionally. 0 = no resize.",
+        "--width", type=int, default=640,
+        help="Target output width in pixels (default: 640 for real-time CPU). 0 = no resize.",
     )
     p.add_argument(
         "--config", type=str, default="config.yaml",
@@ -90,6 +90,14 @@ def build_parser():
     p.add_argument(
         "--record", action="store_true",
         help="Record annotated live video output with HUD to runs/ directory as MP4.",
+    )
+    p.add_argument(
+        "--no-hud", action="store_true",
+        help="Hide on-screen HUD overlay completely (loop FPS, latency, metrics, and status box).",
+    )
+    p.add_argument(
+        "--no-metrics", action="store_true",
+        help="Hide performance stats (loop FPS, overall FPS, ego speed, pipeline latency) but keep target warning status.",
     )
     return p
 
@@ -230,18 +238,26 @@ def get_frame_size(cap, frame):
 
 
 # ── Overlay drawing ──────────────────────────────────────────────────
-def draw_overlay(frame, metrics, res, src_w, src_h, proc_w, proc_h, status=""):
+def draw_overlay(frame, metrics, res, src_w, src_h, proc_w, proc_h, status="", no_metrics=False):
     """Draw multi-line performance and status overlay on frame."""
+    if frame is None:
+        return
+
     level = res.get("level", "NORMAL") if isinstance(res, dict) else "NORMAL"
     detections = res.get("detections", 0) if isinstance(res, dict) else 0
     tracks = res.get("tracks", 0) if isinstance(res, dict) else 0
     primary = res.get("primary") if isinstance(res, dict) else None
 
-    lines = [
-        f"Loop FPS: {metrics.sliding_fps:5.1f}  |  Overall: {metrics.overall_fps:5.1f}",
-        f"Pipeline: {metrics.avg_pipeline_ms:5.1f}ms  |  YOLO: {metrics.avg_yolo_ms:4.0f}ms  |  Depth: {metrics.avg_depth_ms:4.0f}ms",
-        f"Source: {src_w}x{src_h} -> {proc_w}x{proc_h}  |  Det: {detections}  Tracks: {tracks}",
-    ]
+    ego_speed = res.get("ego_speed_mps") if isinstance(res, dict) else None
+    ego_str = f"  |  Ego: {ego_speed:4.1f}m/s" if ego_speed is not None else ""
+
+    lines = []
+    if not no_metrics:
+        lines.extend([
+            f"Loop FPS: {metrics.sliding_fps:5.1f}  |  Overall: {metrics.overall_fps:5.1f}{ego_str}",
+            f"Pipeline: {metrics.avg_pipeline_ms:5.1f}ms  |  YOLO: {metrics.avg_yolo_ms:4.0f}ms  |  Depth: {metrics.avg_depth_ms:4.0f}ms",
+            f"Source: {src_w}x{src_h} -> {proc_w}x{proc_h}  |  Det: {detections}  Tracks: {tracks}",
+        ])
 
     # Warning/risk status from pipeline
     if primary is not None:
@@ -252,10 +268,14 @@ def draw_overlay(frame, metrics, res, src_w, src_h, proc_w, proc_h, status=""):
         ttc_str = f"{p_ttc:.2f}s" if p_ttc is not None else "inf"
         lines.append(f"Primary: {p_class}  Dist:{dist_str}  TTC:{ttc_str}  [{level}]")
     else:
-        lines.append(f"Status: {level}")
+        standstill_msg = "  [STANDSTILL - Red Light]" if (ego_speed is not None and ego_speed < 0.5) else ""
+        lines.append(f"Status: {level}{standstill_msg}")
 
     if status:
         lines.append(status)
+
+    if not lines:
+        return
 
     # Draw with dark background for readability
     y_start = 10
@@ -311,6 +331,8 @@ def main():
     # ── Load pipeline (before opening camera so --help does not load model) ──
     print(f"Loading config: {args.config}", flush=True)
     cfg = load_config(args.config)
+    if args.no_hud:
+        cfg.set("visual.show_performance", False)
     print("Loading models...", flush=True)
     pipe = CollisionWarningSystem(cfg)
 
@@ -394,8 +416,10 @@ def main():
         else:
             metrics.tick(pipeline_ms)
 
+        if not args.no_hud and drawn is not None:
+            draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h, no_metrics=args.no_metrics)
+
         if not args.no_display:
-            draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h)
             cv2.imshow(WINDOW_NAME, drawn)
             cv2.waitKey(1)
 
@@ -468,15 +492,15 @@ def main():
             metrics.tick(pipeline_ms, yolo_ms_val, depth_ms_val)
 
             # ── Overlay ──
+            if not args.no_hud and drawn is not None:
+                draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h, no_metrics=args.no_metrics)
+
             if not args.no_display:
-                draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h)
                 cv2.imshow(WINDOW_NAME, drawn)
                 key = cv2.waitKey(1)
                 if key in (27, ord("q")):
                     print("Quit by user.", flush=True)
                     break
-            elif recorder and drawn is not None:
-                draw_overlay(drawn, metrics, res, src_w, src_h, proc_w, proc_h)
 
             # ── Record video ──
             if recorder and drawn is not None:

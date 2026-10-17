@@ -248,7 +248,7 @@ class CollisionWarningSystem:
             )
 
             risk = risk_mod.compute_risk(det, history, roi, width, self.cfg,
-                                          corridor=corridor)
+                                          corridor=corridor, ego_speed=ego_speed)
             records.append({"detection": det, "history": history, "risk": risk})
 
             if det["track_id"] is not None:

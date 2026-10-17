@@ -117,6 +117,47 @@ def worse_level(*levels):
     return best
 
 
+def classify_risk_level(ttc, distance, warning_ttc=4.0, danger_ttc=2.0,
+                        warn_distance=8.0, danger_distance=3.5, mode="and"):
+    """Evaluate warning level using AND (&&) or OR (||) logic.
+
+    AND mode (recommended for real driving):
+      - DANGER:  ttc <= danger_ttc AND distance <= danger_distance
+      - WARNING: ttc <= warning_ttc AND distance <= warn_distance
+      - NORMAL:  otherwise
+
+    OR mode (legacy):
+      - Worse of classify_ttc and classify_distance
+    """
+    warning_ttc = 4.0 if warning_ttc is None else float(warning_ttc)
+    danger_ttc = 2.0 if danger_ttc is None else float(danger_ttc)
+    warn_distance = 8.0 if warn_distance is None else float(warn_distance)
+    danger_distance = 3.5 if danger_distance is None else float(danger_distance)
+
+    valid_ttc = ttc is not None and np.isfinite(ttc) and ttc > 0
+    valid_dist = distance is not None and np.isfinite(distance) and distance > 0
+
+    if str(mode).lower() == "and":
+        if not valid_ttc or not valid_dist:
+            return NORMAL
+        if ttc <= danger_ttc and distance <= danger_distance:
+            return DANGER
+        if ttc <= warning_ttc and distance <= warn_distance:
+            return WARNING
+        return NORMAL
+    else:
+        lvl_ttc = classify_ttc(ttc, warning_ttc, danger_ttc)
+        lvl_dist = classify_distance(distance, warn_distance, danger_distance)
+        return worse_level(lvl_ttc, lvl_dist)
+
+
+def classify_level_and(ttc, distance, warning_ttc=4.0, danger_ttc=2.0,
+                       warn_distance=8.0, danger_distance=3.5):
+    """Classify risk level using AND (&&) logic."""
+    return classify_risk_level(ttc, distance, warning_ttc, danger_ttc,
+                               warn_distance, danger_distance, mode="and")
+
+
 def road_roi(frame_shape, cfg=None):
     """Forward-road ROI as (x1, y1, x2, y2) in pixels.
 
@@ -195,7 +236,7 @@ def in_corridor(detection, corridor):
     return (x1 <= cx <= x2) and (y1 <= cy <= y2)
 
 
-def compute_risk(detection, history, roi, frame_width, cfg=None, corridor=None):
+def compute_risk(detection, history, roi, frame_width, cfg=None, corridor=None, ego_speed=None):
     """Full risk assessment for one tracked object.
 
     Combines the geometric signals: ROI membership, proximity to centre,
@@ -208,13 +249,40 @@ def compute_risk(detection, history, roi, frame_width, cfg=None, corridor=None):
     warn_distance = _f(cfg, "collision.warning_distance_m", 8.0)
     danger_distance = _f(cfg, "collision.danger_distance_m", 3.5)
 
+    # Standstill / Red-light suppression thresholds
+    standstill_suppression = bool(cfg.get("collision.standstill_suppression", True)) if cfg else True
+    standstill_ego_speed = _f(cfg, "collision.standstill_ego_speed_mps", 0.5)
+    standstill_closing_speed = _f(cfg, "collision.standstill_closing_speed_mps", 0.2)
+
     ttc, ttc_valid = history.time_to_collision()
     distance = history.distance
     level_ttc = classify_ttc(ttc, warning_ttc, danger_ttc)
     level_dist = classify_distance(distance, warn_distance, danger_distance)
-    # The worse of the two wins: range catches the stationary case that TTC
-    # cannot express, TTC catches the fast-approach case that range cannot.
-    raw_level = worse_level(level_ttc, level_dist)
+
+    # Check standstill condition (e.g. stopped at a red light)
+    # When both ego vehicle is stationary and closing speed is negligible,
+    # suppress range-based proximity warnings to prevent continuous alarms.
+    is_standstill = False
+    if standstill_suppression and ego_speed is not None:
+        ego_motion_enabled = bool(cfg.get("ego_motion.enabled", True)) if cfg else True
+        if ego_motion_enabled:
+            closing_spd = float(getattr(history, "closing_speed", 0.0) or 0.0)
+            if float(ego_speed) < standstill_ego_speed and closing_spd < standstill_closing_speed:
+                is_standstill = True
+                level_dist = NORMAL
+
+    risk_mode = cfg.get("collision.risk_mode", "and") if cfg else "or"
+    if is_standstill:
+        raw_level = NORMAL
+    else:
+        raw_level = classify_risk_level(
+            ttc, distance,
+            warning_ttc=warning_ttc,
+            danger_ttc=danger_ttc,
+            warn_distance=warn_distance,
+            danger_distance=danger_distance,
+            mode=risk_mode,
+        )
 
     center = center_score(detection, frame_width, cfg)
     in_roi = is_in_roi(detection, roi)
@@ -261,6 +329,7 @@ def compute_risk(detection, history, roi, frame_width, cfg=None, corridor=None):
                          and 0 < distance <= min_distance),
         # Whether the distance is measured or inferred; surfaced in the CSV.
         "distance_source": history.distance_source,
+        "standstill_suppressed": is_standstill,
     }
 
 

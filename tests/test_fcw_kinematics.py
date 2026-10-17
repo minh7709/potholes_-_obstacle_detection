@@ -333,3 +333,60 @@ def test_audio_wav_files_are_generated(tmp_path):
 
     # Calling again must not overwrite existing assets.
     assert ensure_audio_assets(warning, danger) == []
+
+
+# ── Standstill / Red-light suppression ─────────────────────────────────
+def test_standstill_suppresses_proximity_alarm_at_red_light():
+    roi = road_roi((720, 1280))
+    corridor = (int(1280 * 0.22), int(720 * 0.26), int(1280 * 0.78), 720)
+    det = make_detection(640, 500, cls="car")
+    # Car stopped 3.0 m ahead (would normally be DANGER because < 3.5m)
+    # But ego vehicle is stopped (ego_speed=0.1 < 0.5) and closing_speed=0.0 (< 0.2)
+    hist = make_history(distance=3.0, speed=0.0, valid=True, cls="car")
+    risk = compute_risk(det, hist, roi, 1280, corridor=corridor, ego_speed=0.1)
+    assert risk["standstill_suppressed"] is True
+    assert risk["level"] == NORMAL
+
+
+def test_standstill_does_not_suppress_when_moving():
+    roi = road_roi((720, 1280))
+    corridor = (int(1280 * 0.22), int(720 * 0.26), int(1280 * 0.78), 720)
+    det = make_detection(640, 500, cls="car")
+    # Ego vehicle is moving (ego_speed=3.0 m/s > 0.5 m/s)
+    hist = make_history(distance=3.0, speed=0.0, valid=True, cls="car")
+    risk = compute_risk(det, hist, roi, 1280, corridor=corridor, ego_speed=3.0)
+    assert risk["standstill_suppressed"] is False
+    assert risk["level"] == DANGER
+
+
+def test_standstill_does_not_suppress_when_closing_fast():
+    roi = road_roi((720, 1280))
+    corridor = (int(1280 * 0.22), int(720 * 0.26), int(1280 * 0.78), 720)
+    det = make_detection(640, 500, cls="car")
+    # Ego vehicle stopped (ego_speed=0.1), but object is approaching fast (closing_speed=1.5 m/s)
+    hist = make_history(distance=3.0, speed=1.5, valid=True, cls="car")
+    risk = compute_risk(det, hist, roi, 1280, corridor=corridor, ego_speed=0.1)
+    assert risk["standstill_suppressed"] is False
+    assert risk["level"] == DANGER
+
+
+def test_classify_level_and_logic():
+    from app.fcw.risk import classify_level_and
+
+    # DANGER: requires BOTH ttc <= 1.0 AND distance <= 2.0
+    assert classify_level_and(ttc=0.8, distance=1.5, warning_ttc=2.0, danger_ttc=1.0,
+                              warn_distance=4.0, danger_distance=2.0) == DANGER
+
+    # Fails distance condition for DANGER (distance 3.0 > 2.0, but <= 4.0 and ttc <= 2.0 -> WARNING)
+    assert classify_level_and(ttc=0.8, distance=3.0, warning_ttc=2.0, danger_ttc=1.0,
+                              warn_distance=4.0, danger_distance=2.0) == WARNING
+
+    # Fails TTC condition for DANGER and WARNING (ttc 3.0 > 2.0 -> NORMAL even if close distance 1.5)
+    assert classify_level_and(ttc=3.0, distance=1.5, warning_ttc=2.0, danger_ttc=1.0,
+                              warn_distance=4.0, danger_distance=2.0) == NORMAL
+
+    # Infinite TTC (stationary vehicle) -> always NORMAL
+    assert classify_level_and(ttc=float("inf"), distance=1.5, warning_ttc=2.0, danger_ttc=1.0,
+                              warn_distance=4.0, danger_distance=2.0) == NORMAL
+
+

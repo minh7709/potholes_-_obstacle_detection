@@ -138,6 +138,7 @@ def system():
         "collision.confirm_frames=2",
         "collision.danger_ttc=3.0",
         "collision.warning_ttc=6.0",
+        "collision.risk_mode=or",
         # Tighten the windows so 40 synthetic frames are enough to fit a speed.
         "speed.min_samples=3",
         "speed.min_window_sec=0.2",
@@ -215,12 +216,12 @@ def test_confirmation_prevents_single_frame_false_alarm(system):
 
 
 def test_non_primary_class_never_warns(system):
-    """A car must not trigger the motorcycle collision alarm in v1."""
-    system.detector.class_name = "car"
+    """A non-primary class (like pothole) must not trigger the collision alarm."""
+    system.detector.class_name = "pothole"
     for i in range(80):
         frame = np.zeros((540, 960, 3), dtype=np.uint8)
         _, result = system.process_frame(frame, timestamp=i / 30.0)
-        assert result["level"] == NORMAL, f"car raised {result['level']}"
+        assert result["level"] == NORMAL, f"pothole raised {result['level']}"
 
 
 def test_track_history_persists_across_frames(system):

@@ -39,10 +39,10 @@ class TestBuildParser:
         assert args.url == "http://192.168.1.42:8080/video"
         assert args.width == 960
 
-    def test_default_width_zero(self):
+    def test_default_width(self):
         parser = build_parser()
         args = parser.parse_args(["--url", "http://example.com/video"])
-        assert args.width == 0
+        assert args.width == 640
 
     def test_config_default(self):
         parser = build_parser()
@@ -58,6 +58,16 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args(["--url", "test.mp4", "--no-display"])
         assert args.no_display is True
+
+    def test_no_hud_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["--url", "test.mp4", "--no-hud"])
+        assert args.no_hud is True
+
+    def test_no_metrics_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["--url", "test.mp4", "--no-metrics"])
+        assert args.no_metrics is True
 
 
 class TestValidateArgs:

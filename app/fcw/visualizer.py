@@ -74,8 +74,9 @@ class Visualizer:
             bar = max(6, int(h * 0.014))
             cv2.rectangle(canvas, (0, h - bar), (w, h), (0, 0, 255), -1)
 
-        self._draw_hud(canvas, records, primary, now, ego_speed,
-                       detector, depth, depth_computed, source_label)
+        if self.show_perf:
+            self._draw_hud(canvas, records, primary, now, ego_speed,
+                           detector, depth, depth_computed, source_label)
 
         # Big status banner, so the state is readable at a glance.
         if level in (WARNING, DANGER):
