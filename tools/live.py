@@ -25,6 +25,14 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+# ── Offline-first HuggingFace Hub ─────────────────────────────────────
+# Nếu không có mạng hoặc Hub không reach được, dùng cache ngay thay vì
+# timeout hàng chục giây rồi mới fallback.  Nếu model chưa có cache thì
+# lỗi ngay (rõ ràng) thay vì treo máy.
+# Bỏ dòng này nếu muốn tự động tải model mới khi có mạng.
+if not os.environ.get("HF_HUB_ONLINE"):          # cho phép override từ bên ngoài
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import cv2
 
 # ── Project root setup ────────────────────────────────────────────────
