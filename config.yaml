@@ -34,7 +34,7 @@ processing:
 depth:
   # Run Depth Anything V2 only every N processed frames. The dominant
   # optimisation: at interval 8 the depth cost drops to 1/8.
-  interval: 8
+  interval: 5
   # Network input height (must be multiple of 14 for ViT patch embedding).
   # 182 = fast CPU optimum (14x13) | 224 = standard | 350 = balanced | 518 = slow
   processing_height: 182

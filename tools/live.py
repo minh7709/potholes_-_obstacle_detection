@@ -20,10 +20,19 @@ import argparse
 import csv
 import os
 import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+
+# ── Low-latency FFmpeg stream settings ─────────────────────────────────
+# Triệt tiêu bộ đệm mạng nội bộ của FFmpeg trong OpenCV khi đọc HTTP/RTSP.
+# Giúp loại bỏ hoàn toàn độ trễ tích tụ (buffer accumulation lag).
+if "OPENCV_FFMPEG_CAPTURE_OPTIONS" not in os.environ:
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+        "fflags;nobuffer|flags;low_delay|framedrop;1|max_delay;0"
+    )
 
 # ── Offline-first HuggingFace Hub ─────────────────────────────────────
 # Nếu không có mạng hoặc Hub không reach được, dùng cache ngay thay vì
@@ -106,6 +115,10 @@ def build_parser():
     p.add_argument(
         "--no-metrics", action="store_true",
         help="Hide performance stats (loop FPS, overall FPS, ego speed, pipeline latency) but keep target warning status.",
+    )
+    p.add_argument(
+        "--no-thread", action="store_true",
+        help="Disable background frame reader thread for live network streams (process sequentially).",
     )
     return p
 
@@ -221,9 +234,89 @@ class BenchmarkWriter:
 
 
 # ── Camera connection ─────────────────────────────────────────────────
-def open_camera(url, timeout_sec=15):
-    """Try to open a video source. Returns (cap, True) or (None, False)."""
+class ThreadedVideoCapture:
+    """Threaded VideoCapture that continuously drains the socket buffer in background.
+
+    Always provides the latest available frame, completely eliminating OpenCV/FFmpeg
+    network buffer queue accumulation (Buffer Lag), which typically introduces
+    500-800ms of artificial latency when the model's processing FPS is lower than
+    the camera's capture FPS.
+    """
+
+    def __init__(self, src):
+        self.src = src
+        self.cap = cv2.VideoCapture(src)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.grabbed, self.frame = self.cap.read()
+        self.started = False
+        self.lock = threading.Lock()
+        self.thread = None
+
+    def start(self):
+        if self.started:
+            return self
+        self.started = True
+        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.thread.start()
+        return self
+
+    def _reader_loop(self):
+        while self.started:
+            grabbed, frame = self.cap.read()
+            if not grabbed:
+                with self.lock:
+                    self.grabbed = False
+                break
+            with self.lock:
+                self.grabbed = grabbed
+                self.frame = frame
+
+    def read(self):
+        with self.lock:
+            if not self.grabbed or self.frame is None:
+                return False, None
+            return True, self.frame.copy()
+
+    def set(self, prop_id, value):
+        return self.cap.set(prop_id, value)
+
+    def get(self, prop_id):
+        return self.cap.get(prop_id)
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def release(self):
+        self.started = False
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        self.cap.release()
+
+
+def is_network_stream(url):
+    """Check if URL points to a live network stream or local webcam index."""
+    if isinstance(url, int):
+        return True
+    s = str(url).strip()
+    return s.isdigit() or s.startswith(("http://", "https://", "rtsp://", "rtmp://"))
+
+
+def open_camera(url, timeout_sec=15, use_threading=True):
+    """Try to open a video source. Returns (cap, True) or (None, False).
+
+    If url is a live network stream and use_threading is True, wraps the capture
+    in ThreadedVideoCapture to eliminate network buffer accumulation latency.
+    """
+    if use_threading and is_network_stream(url):
+        stream = ThreadedVideoCapture(url)
+        if not stream.isOpened() or not stream.grabbed or stream.frame is None:
+            stream.release()
+            return None, False
+        stream.start()
+        return stream, True
+
     cap = cv2.VideoCapture(url)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
         return None, False
     # Try to read a test frame to confirm the stream is alive.
@@ -346,7 +439,8 @@ def main():
 
     # ── Open camera ──
     print(f"Connecting to: {url}", flush=True)
-    cap, ok = open_camera(url)
+    use_thread = not args.no_thread
+    cap, ok = open_camera(url, use_threading=use_thread)
     if not ok:
         print(f"\n[ERROR] Cannot open camera/video: {url}", file=sys.stderr)
         print("Troubleshooting:", file=sys.stderr)
@@ -403,7 +497,7 @@ def main():
     first_frame = test_frame
     if scale < 1.0:
         first_frame = cv2.resize(first_frame, None, fx=scale, fy=scale,
-                                 interpolation=cv2.INTER_AREA)
+                                 interpolation=cv2.INTER_LINEAR)
 
     # ── Main loop with try/finally ──
     cap_released = False
@@ -465,7 +559,7 @@ def main():
                         time.sleep(reconnect_delay)
 
                     cap.release()
-                    cap, reopen_ok = open_camera(url)
+                    cap, reopen_ok = open_camera(url, use_threading=use_thread)
                     if reopen_ok:
                         print(f"Reconnected on attempt {attempt}.", flush=True)
                         reconnected = True
@@ -479,7 +573,7 @@ def main():
             # Resize if needed
             if scale < 1.0:
                 frame = cv2.resize(frame, None, fx=scale, fy=scale,
-                                   interpolation=cv2.INTER_AREA)
+                                   interpolation=cv2.INTER_LINEAR)
 
             # ── Pipeline ──
             t0 = time.perf_counter()
